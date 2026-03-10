@@ -6,8 +6,64 @@ Quick validation script for skills - minimal version
 import sys
 import os
 import re
-import yaml
 from pathlib import Path
+
+try:
+    import yaml
+except ModuleNotFoundError:  # Optional dependency
+    yaml = None
+
+
+def load_frontmatter(frontmatter_text):
+    """Parse frontmatter with PyYAML when available, otherwise use a small fallback parser."""
+    if yaml is not None:
+        try:
+            frontmatter = yaml.safe_load(frontmatter_text)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in frontmatter: {e}") from e
+        if not isinstance(frontmatter, dict):
+            raise ValueError("Frontmatter must be a YAML dictionary")
+        return frontmatter
+
+    frontmatter = {}
+    multiline_key = None
+    multiline_lines = []
+
+    def flush_multiline():
+        nonlocal multiline_key, multiline_lines
+        if multiline_key is not None:
+            frontmatter[multiline_key] = " ".join(line.strip() for line in multiline_lines).strip()
+            multiline_key = None
+            multiline_lines = []
+
+    for raw_line in frontmatter_text.splitlines():
+        if multiline_key is not None and (raw_line.startswith("  ") or raw_line.startswith("\t")):
+            multiline_lines.append(raw_line)
+            continue
+
+        flush_multiline()
+
+        if not raw_line.strip():
+            continue
+        if ":" not in raw_line:
+            raise ValueError(f"Unsupported frontmatter line without key/value separator: {raw_line!r}")
+
+        key, value = raw_line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+
+        if value in {">", "|", ">-", "|-"}:
+            multiline_key = key
+            multiline_lines = []
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+
+        frontmatter[key] = value
+
+    flush_multiline()
+    return frontmatter
 
 def validate_skill(skill_path):
     """Basic validation of a skill"""
@@ -19,7 +75,7 @@ def validate_skill(skill_path):
         return False, "SKILL.md not found"
 
     # Read and validate frontmatter
-    content = skill_md.read_text()
+    content = skill_md.read_text(encoding="utf-8")
     if not content.startswith('---'):
         return False, "No YAML frontmatter found"
 
@@ -32,11 +88,11 @@ def validate_skill(skill_path):
 
     # Parse YAML frontmatter
     try:
-        frontmatter = yaml.safe_load(frontmatter_text)
+        frontmatter = load_frontmatter(frontmatter_text)
         if not isinstance(frontmatter, dict):
             return False, "Frontmatter must be a YAML dictionary"
-    except yaml.YAMLError as e:
-        return False, f"Invalid YAML in frontmatter: {e}"
+    except ValueError as e:
+        return False, str(e)
 
     # Define allowed properties
     ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
