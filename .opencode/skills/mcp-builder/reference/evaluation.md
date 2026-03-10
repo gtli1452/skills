@@ -2,6 +2,8 @@
 
 ## Overview
 
+This OpenCode adaptation keeps the evaluation workflow but assumes the bundled harness will talk to an OpenAI-compatible, tool-calling model. Configure it with `OPENAI_API_KEY`, optionally `OPENAI_BASE_URL`, and either `--model` or `OPENAI_MODEL`. If you do not have a compatible model endpoint, follow this guide manually and skip the harness.
+
 This document provides guidance on creating comprehensive evaluations for MCP servers. Evaluations test whether LLMs can effectively use your MCP server to answer realistic, complex questions using only the tools provided.
 
 ---
@@ -389,13 +391,17 @@ After creating your evaluation file, you can use the provided evaluation harness
 
    Or install manually:
    ```bash
-   pip install anthropic mcp
+   pip install openai mcp
    ```
 
-2. **Set API Key**
+2. **Set model endpoint credentials**
 
    ```bash
-   export ANTHROPIC_API_KEY=your_api_key_here
+   export OPENAI_API_KEY=your_api_key_here
+   # Optional when using a non-default OpenAI-compatible endpoint
+   export OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+   # Optional if you want to override the default model
+   export OPENAI_MODEL=gpt-oss-120b
    ```
 
 ## Evaluation File Format
@@ -485,7 +491,7 @@ positional arguments:
 optional arguments:
   -h, --help            Show help message
   -t, --transport       Transport type: stdio, sse, or http (default: stdio)
-  -m, --model           Claude model to use (default: claude-3-7-sonnet-20250219)
+  -m, --model           Model to use (default: OPENAI_MODEL or gpt-oss-120b)
   -o, --output          Output file for report (default: print to stdout)
 
 stdio options:
@@ -554,7 +560,10 @@ Here's a complete example of creating and running an evaluation:
 
 ```bash
 pip install -r scripts/requirements.txt
-export ANTHROPIC_API_KEY=your_api_key
+export OPENAI_API_KEY=your_api_key
+# Optional when using a non-default OpenAI-compatible endpoint
+export OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+export OPENAI_MODEL=gpt-oss-120b
 ```
 
 3. **Run evaluation**:
@@ -596,7 +605,7 @@ If many evaluations fail:
 ### Timeout Issues
 
 If tasks are timing out:
-- Use a more capable model (e.g., `claude-3-7-sonnet-20250219`)
+- Use a more capable tool-calling model (for example, the strongest OpenAI-compatible reasoning model available in your environment)
 - Check if tools are returning too much data
 - Verify pagination is working correctly
 - Consider simplifying complex questions

@@ -1,11 +1,13 @@
 """MCP Server Evaluation Harness
 
-This script evaluates MCP servers by running test questions against them using Claude.
+Evaluate MCP servers against an XML question set using any OpenAI-compatible,
+tool-calling chat-completions endpoint.
 """
 
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 import time
@@ -14,163 +16,191 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from anthropic import Anthropic
+from openai import OpenAI
 
 from connections import create_connection
 
-EVALUATION_PROMPT = """You are an AI assistant with access to tools.
+EVALUATION_PROMPT = """You are an AI assistant with access to MCP-backed tools.
 
 When given a task, you MUST:
-1. Use the available tools to complete the task
-2. Provide summary of each step in your approach, wrapped in <summary> tags
-3. Provide feedback on the tools provided, wrapped in <feedback> tags
-4. Provide your final response, wrapped in <response> tags
+1. Use the available tools to complete the task when needed.
+2. Provide a summary of each step in your approach, wrapped in <summary> tags.
+3. Provide feedback on the tools provided, wrapped in <feedback> tags.
+4. Provide your final response, wrapped in <response> tags.
 
-Summary Requirements:
-- In your <summary> tags, you must explain:
-  - The steps you took to complete the task
-  - Which tools you used, in what order, and why
-  - The inputs you provided to each tool
-  - The outputs you received from each tool
-  - A summary for how you arrived at the response
+Summary requirements:
+- Explain the steps you took.
+- Mention which tools you used, in what order, and why.
+- Summarize the important inputs and outputs.
 
-Feedback Requirements:
-- In your <feedback> tags, provide constructive feedback on the tools:
-  - Comment on tool names: Are they clear and descriptive?
-  - Comment on input parameters: Are they well-documented? Are required vs optional parameters clear?
-  - Comment on descriptions: Do they accurately describe what the tool does?
-  - Comment on any errors encountered during tool usage: Did the tool fail to execute? Did the tool return too many tokens?
-  - Identify specific areas for improvement and explain WHY they would help
-  - Be specific and actionable in your suggestions
+Feedback requirements:
+- Comment on tool names, descriptions, and schemas.
+- Note confusing parameters, oversized responses, or weak pagination.
+- Suggest specific improvements that would help future agents.
 
-Response Requirements:
-- Your response should be concise and directly address what was asked
-- Always wrap your final response in <response> tags
-- If you cannot solve the task return <response>NOT_FOUND</response>
-- For numeric responses, provide just the number
-- For IDs, provide just the ID
-- For names or text, provide the exact text requested
-- Your response should go last"""
+Response requirements:
+- Keep the final answer concise.
+- If you cannot solve the task, return <response>NOT_FOUND</response>.
+- For numeric answers, output only the number.
+- For identifiers or names, output the exact requested value.
+"""
+
+
+def default_model(explicit: str | None = None) -> str:
+    return explicit or os.getenv("OPENAI_MODEL") or "gpt-oss-120b"
+
+
+def create_client(base_url: str | None = None, api_key: str | None = None, timeout: int = 120) -> OpenAI:
+    kwargs: dict[str, Any] = {
+        "api_key": api_key or os.getenv("OPENAI_API_KEY") or "opencode",
+        "timeout": timeout,
+    }
+    resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL")
+    if resolved_base_url:
+        kwargs["base_url"] = resolved_base_url
+    return OpenAI(**kwargs)
+
+
+def jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [jsonable(v) for v in value]
+    if hasattr(value, "model_dump"):
+        return jsonable(value.model_dump())
+    if hasattr(value, "__dict__"):
+        return jsonable({k: v for k, v in vars(value).items() if not k.startswith("_")})
+    return str(value)
 
 
 def parse_evaluation_file(file_path: Path) -> list[dict[str, Any]]:
-    """Parse XML evaluation file with qa_pair elements."""
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
-        evaluations = []
-
-        for qa_pair in root.findall(".//qa_pair"):
-            question_elem = qa_pair.find("question")
-            answer_elem = qa_pair.find("answer")
-
-            if question_elem is not None and answer_elem is not None:
-                evaluations.append({
-                    "question": (question_elem.text or "").strip(),
-                    "answer": (answer_elem.text or "").strip(),
-                })
-
-        return evaluations
-    except Exception as e:
-        print(f"Error parsing evaluation file {file_path}: {e}")
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"Error parsing evaluation file {file_path}: {exc}")
         return []
 
+    evaluations: list[dict[str, Any]] = []
+    for qa_pair in root.findall(".//qa_pair"):
+        question_elem = qa_pair.find("question")
+        answer_elem = qa_pair.find("answer")
+        if question_elem is None or answer_elem is None:
+            continue
+        evaluations.append(
+            {
+                "question": (question_elem.text or "").strip(),
+                "answer": (answer_elem.text or "").strip(),
+            }
+        )
+    return evaluations
 
-def extract_xml_content(text: str, tag: str) -> str | None:
-    """Extract content from XML tags."""
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    matches = re.findall(pattern, text, re.DOTALL)
+
+def extract_xml_content(text: str | None, tag: str) -> str | None:
+    if not text:
+        return None
+    matches = re.findall(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
     return matches[-1].strip() if matches else None
 
 
+def build_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    openai_tools: list[dict[str, Any]] = []
+    for tool in tools:
+        parameters = tool.get("input_schema") or {"type": "object", "properties": {}}
+        if parameters.get("type") != "object":
+            parameters = {"type": "object", "properties": {"value": parameters}}
+        openai_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description") or "",
+                    "parameters": parameters,
+                },
+            }
+        )
+    return openai_tools
+
+
 async def agent_loop(
-    client: Anthropic,
+    client: OpenAI,
     model: str,
     question: str,
     tools: list[dict[str, Any]],
     connection: Any,
 ) -> tuple[str, dict[str, Any]]:
-    """Run the agent loop with MCP tools."""
-    messages = [{"role": "user", "content": question}]
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": EVALUATION_PROMPT},
+        {"role": "user", "content": question},
+    ]
+    openai_tools = build_openai_tools(tools)
+    tool_metrics: dict[str, dict[str, Any]] = {}
 
-    response = await asyncio.to_thread(
-        client.messages.create,
-        model=model,
-        max_tokens=4096,
-        system=EVALUATION_PROMPT,
-        messages=messages,
-        tools=tools,
-    )
+    while True:
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": 4096,
+        }
+        if openai_tools:
+            request_kwargs["tools"] = openai_tools
+            request_kwargs["tool_choice"] = "auto"
 
-    messages.append({"role": "assistant", "content": response.content})
+        response = await asyncio.to_thread(client.chat.completions.create, **request_kwargs)
+        message = response.choices[0].message
+        messages.append(message.model_dump(exclude_none=True))
 
-    tool_metrics = {}
+        tool_calls = message.tool_calls or []
+        if not tool_calls:
+            return message.content or "", tool_metrics
 
-    while response.stop_reason == "tool_use":
-        tool_use = next(block for block in response.content if block.type == "tool_use")
-        tool_name = tool_use.name
-        tool_input = tool_use.input
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+            try:
+                tool_input = json.loads(tool_call.function.arguments or "{}")
+            except json.JSONDecodeError:
+                tool_input = {}
 
-        tool_start_ts = time.time()
-        try:
-            tool_result = await connection.call_tool(tool_name, tool_input)
-            tool_response = json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result)
-        except Exception as e:
-            tool_response = f"Error executing tool {tool_name}: {str(e)}\n"
-            tool_response += traceback.format_exc()
-        tool_duration = time.time() - tool_start_ts
+            start = time.time()
+            try:
+                tool_result = await connection.call_tool(tool_name, tool_input)
+                normalized_result = jsonable(tool_result)
+                tool_response = json.dumps(normalized_result, ensure_ascii=False)
+            except Exception as exc:  # pragma: no cover - defensive
+                tool_response = f"Error executing tool {tool_name}: {exc}\n{traceback.format_exc()}"
+            duration = time.time() - start
 
-        if tool_name not in tool_metrics:
-            tool_metrics[tool_name] = {"count": 0, "durations": []}
-        tool_metrics[tool_name]["count"] += 1
-        tool_metrics[tool_name]["durations"].append(tool_duration)
+            metrics = tool_metrics.setdefault(tool_name, {"count": 0, "durations": []})
+            metrics["count"] += 1
+            metrics["durations"].append(duration)
 
-        messages.append({
-            "role": "user",
-            "content": [{
-                "type": "tool_result",
-                "tool_use_id": tool_use.id,
-                "content": tool_response,
-            }]
-        })
-
-        response = await asyncio.to_thread(
-            client.messages.create,
-            model=model,
-            max_tokens=4096,
-            system=EVALUATION_PROMPT,
-            messages=messages,
-            tools=tools,
-        )
-        messages.append({"role": "assistant", "content": response.content})
-
-    response_text = next(
-        (block.text for block in response.content if hasattr(block, "text")),
-        None,
-    )
-    return response_text, tool_metrics
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_response,
+                }
+            )
 
 
 async def evaluate_single_task(
-    client: Anthropic,
+    client: OpenAI,
     model: str,
     qa_pair: dict[str, Any],
     tools: list[dict[str, Any]],
     connection: Any,
     task_index: int,
 ) -> dict[str, Any]:
-    """Evaluate a single QA pair with the given tools."""
     start_time = time.time()
-
-    print(f"Task {task_index + 1}: Running task with question: {qa_pair['question']}")
-    response, tool_metrics = await agent_loop(client, model, qa_pair["question"], tools, connection)
-
-    response_value = extract_xml_content(response, "response")
-    summary = extract_xml_content(response, "summary")
-    feedback = extract_xml_content(response, "feedback")
-
+    print(f"Task {task_index + 1}: {qa_pair['question']}")
+    response_text, tool_metrics = await agent_loop(client, model, qa_pair["question"], tools, connection)
+    response_value = extract_xml_content(response_text, "response")
+    summary = extract_xml_content(response_text, "summary")
+    feedback = extract_xml_content(response_text, "feedback")
     duration_seconds = time.time() - start_time
-
     return {
         "question": qa_pair["question"],
         "expected": qa_pair["answer"],
@@ -220,24 +250,21 @@ TASK_TEMPLATE = """
 async def run_evaluation(
     eval_path: Path,
     connection: Any,
-    model: str = "claude-3-7-sonnet-20250219",
+    model: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
 ) -> str:
-    """Run evaluation with MCP server tools."""
-    print("🚀 Starting Evaluation")
-
-    client = Anthropic()
-
+    print("🚀 Starting evaluation")
+    client = create_client(base_url=base_url, api_key=api_key)
     tools = await connection.list_tools()
     print(f"📋 Loaded {len(tools)} tools from MCP server")
-
     qa_pairs = parse_evaluation_file(eval_path)
     print(f"📋 Loaded {len(qa_pairs)} evaluation tasks")
 
     results = []
     for i, qa_pair in enumerate(qa_pairs):
         print(f"Processing task {i + 1}/{len(qa_pairs)}")
-        result = await evaluate_single_task(client, model, qa_pair, tools, connection, i)
-        results.append(result)
+        results.append(await evaluate_single_task(client, model, qa_pair, tools, connection, i))
 
     correct = sum(r["score"] for r in results)
     accuracy = (correct / len(results)) * 100 if results else 0
@@ -253,8 +280,7 @@ async def run_evaluation(
         average_tool_calls=average_tool_calls,
         total_tool_calls=total_tool_calls,
     )
-
-    report += "".join([
+    report += "".join(
         TASK_TEMPLATE.format(
             task_num=i + 1,
             question=qa_pair["question"],
@@ -267,44 +293,35 @@ async def run_evaluation(
             feedback=result["feedback"] or "N/A",
         )
         for i, (qa_pair, result) in enumerate(zip(qa_pairs, results))
-    ])
-
+    )
     return report
 
 
-def parse_headers(header_list: list[str]) -> dict[str, str]:
-    """Parse header strings in format 'Key: Value' into a dictionary."""
-    headers = {}
-    if not header_list:
-        return headers
-
-    for header in header_list:
-        if ":" in header:
-            key, value = header.split(":", 1)
-            headers[key.strip()] = value.strip()
-        else:
-            print(f"Warning: Ignoring malformed header: {header}")
+def parse_headers(header_list: list[str] | None) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for header in header_list or []:
+        if ":" not in header:
+            print(f"Warning: ignoring malformed header: {header}")
+            continue
+        key, value = header.split(":", 1)
+        headers[key.strip()] = value.strip()
     return headers
 
 
-def parse_env_vars(env_list: list[str]) -> dict[str, str]:
-    """Parse environment variable strings in format 'KEY=VALUE' into a dictionary."""
-    env = {}
-    if not env_list:
-        return env
-
-    for env_var in env_list:
-        if "=" in env_var:
-            key, value = env_var.split("=", 1)
-            env[key.strip()] = value.strip()
-        else:
-            print(f"Warning: Ignoring malformed environment variable: {env_var}")
+def parse_env_vars(env_list: list[str] | None) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for entry in env_list or []:
+        if "=" not in entry:
+            print(f"Warning: ignoring malformed environment variable: {entry}")
+            continue
+        key, value = entry.split("=", 1)
+        env[key.strip()] = value.strip()
     return env
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evaluate MCP servers using test questions",
+        description="Evaluate MCP servers using an OpenAI-compatible tool-calling model",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -312,16 +329,17 @@ Examples:
   python evaluation.py -t stdio -c python -a my_server.py eval.xml
 
   # Evaluate an SSE MCP server
-  python evaluation.py -t sse -u https://example.com/mcp -H "Authorization: Bearer token" eval.xml
+  python evaluation.py -t sse -u https://example.com/mcp -H \"Authorization: Bearer token\" eval.xml
 
-  # Evaluate an HTTP MCP server with custom model
-  python evaluation.py -t http -u https://example.com/mcp -m claude-3-5-sonnet-20241022 eval.xml
+  # Evaluate an HTTP MCP server with a local model gateway
+  python evaluation.py -t http -u https://example.com/mcp -m gpt-oss-120b --base-url http://localhost:11434/v1 eval.xml
         """,
     )
-
     parser.add_argument("eval_file", type=Path, help="Path to evaluation XML file")
     parser.add_argument("-t", "--transport", choices=["stdio", "sse", "http"], default="stdio", help="Transport type (default: stdio)")
-    parser.add_argument("-m", "--model", default="claude-3-7-sonnet-20250219", help="Claude model to use (default: claude-3-7-sonnet-20250219)")
+    parser.add_argument("-m", "--model", default=default_model(), help="Model to use (default: OPENAI_MODEL or gpt-oss-120b)")
+    parser.add_argument("--base-url", default=None, help="Override OPENAI_BASE_URL for the evaluation model")
+    parser.add_argument("--api-key", default=None, help="Override OPENAI_API_KEY for the evaluation model")
 
     stdio_group = parser.add_argument_group("stdio options")
     stdio_group.add_argument("-c", "--command", help="Command to run MCP server (stdio only)")
@@ -332,38 +350,41 @@ Examples:
     remote_group.add_argument("-u", "--url", help="MCP server URL (sse/http only)")
     remote_group.add_argument("-H", "--header", nargs="+", dest="headers", help="HTTP headers in 'Key: Value' format (sse/http only)")
 
-    parser.add_argument("-o", "--output", type=Path, help="Output file for evaluation report (default: stdout)")
-
+    parser.add_argument("-o", "--output", type=Path, help="Output file for the evaluation report (default: stdout)")
     args = parser.parse_args()
 
     if not args.eval_file.exists():
-        print(f"Error: Evaluation file not found: {args.eval_file}")
+        print(f"Error: evaluation file not found: {args.eval_file}")
         sys.exit(1)
 
-    headers = parse_headers(args.headers) if args.headers else None
-    env_vars = parse_env_vars(args.env) if args.env else None
+    headers = parse_headers(args.headers)
+    env_vars = parse_env_vars(args.env)
 
     try:
         connection = create_connection(
             transport=args.transport,
             command=args.command,
             args=args.args,
-            env=env_vars,
+            env=env_vars or None,
             url=args.url,
-            headers=headers,
+            headers=headers or None,
         )
-    except ValueError as e:
-        print(f"Error: {e}")
+    except ValueError as exc:
+        print(f"Error: {exc}")
         sys.exit(1)
 
     print(f"🔗 Connecting to MCP server via {args.transport}...")
-
     async with connection:
         print("✅ Connected successfully")
-        report = await run_evaluation(args.eval_file, connection, args.model)
-
+        report = await run_evaluation(
+            args.eval_file,
+            connection,
+            model=args.model,
+            base_url=args.base_url,
+            api_key=args.api_key,
+        )
         if args.output:
-            args.output.write_text(report)
+            args.output.write_text(report, encoding="utf-8")
             print(f"\n✅ Report saved to {args.output}")
         else:
             print("\n" + report)
