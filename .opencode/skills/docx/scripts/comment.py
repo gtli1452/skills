@@ -83,6 +83,15 @@ def _encode_smart_quotes(text: str) -> str:
     return text
 
 
+def _default_initials(author: str) -> str:
+    initials = "".join(part[0] for part in author.split() if part)
+    if initials:
+        return initials[:3].upper()
+
+    fallback = "".join(char for char in author if char.isalnum())
+    return (fallback[:1] or "A").upper()
+
+
 def _append_xml(xml_path: Path, root_tag: str, content: str) -> None:
     dom = defusedxml.minidom.parseString(xml_path.read_text(encoding="utf-8"))
     root = dom.getElementsByTagName(root_tag)[0]
@@ -219,14 +228,15 @@ def add_comment(
     unpacked_dir: str,
     comment_id: int,
     text: str,
-    author: str = "Claude",
-    initials: str = "C",
+    author: str = "Assistant",
+    initials: str | None = None,
     parent_id: int | None = None,
 ) -> tuple[str, str]:
     word = Path(unpacked_dir) / "word"
     if not word.exists():
         return "", f"Error: {word} not found"
 
+    initials = initials or _default_initials(author)
     para_id, durable_id = _generate_hex_id(), _generate_hex_id()
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -295,8 +305,8 @@ if __name__ == "__main__":
     p.add_argument("unpacked_dir", help="Unpacked DOCX directory")
     p.add_argument("comment_id", type=int, help="Comment ID (must be unique)")
     p.add_argument("text", help="Comment text")
-    p.add_argument("--author", default="Claude", help="Author name")
-    p.add_argument("--initials", default="C", help="Author initials")
+    p.add_argument("--author", default="Assistant", help="Author name (default: Assistant)")
+    p.add_argument("--initials", help="Author initials (default: derived from author)")
     p.add_argument("--parent", type=int, help="Parent comment ID (for replies)")
     args = p.parse_args()
 
