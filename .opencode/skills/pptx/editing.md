@@ -1,45 +1,51 @@
-# Editing Presentations
+# Editing presentations
 
-## Template-Based Workflow
-
+## Template-based workflow
 When using an existing presentation as a template:
 
 1. **Analyze existing slides**:
    ```bash
-   python scripts/thumbnail.py template.pptx
+   python scripts\thumbnail.py template.pptx
    python -m markitdown template.pptx
    ```
-   Review `thumbnails.jpg` to see layouts, and markitdown output to see placeholder text.
+   Review `thumbnails.jpg` to understand layouts, then inspect the extracted text to find placeholders and speaker-note content.
 
-2. **Plan slide mapping**: For each content section, choose a template slide.
+2. **Plan slide mapping**:
+   - Match each content section to a template slide before editing XML
+   - Use varied layouts; avoid turning every slide into the same title-plus-bullets pattern
+   - Remove unused visual groups instead of leaving empty placeholders behind
 
-   ⚠️ **USE VARIED LAYOUTS** — monotonous presentations are a common failure mode. Don't default to basic title + bullet slides. Actively seek out:
-   - Multi-column layouts (2-column, 3-column)
-   - Image + text combinations
-   - Full-bleed images with text overlay
-   - Quote or callout slides
-   - Section dividers
-   - Stat/number callouts
-   - Icon grids or icon + text rows
+3. **Unpack**:
+   ```bash
+   python scripts\office\unpack.py template.pptx unpacked
+   ```
 
-   **Avoid:** Repeating the same text-heavy layout for every slide.
+4. **Complete structural changes before text edits**:
+   - Delete unwanted slides by removing their `<p:sldId>` entries from `ppt\presentation.xml`
+   - Duplicate or add slides with `python scripts\add_slide.py unpacked slide2.xml`
+   - Reorder slides inside `<p:sldIdLst>`
 
-   Match content type to layout style (e.g., key points → bullet slide, team info → multi-column, testimonials → quote slide).
+5. **Edit slide content**:
+   - Update the individual `slideN.xml` files under `unpacked\ppt\slides\`
+   - Replace all placeholder text, images, icons, charts, captions, and citations
+   - Keep each logical list item or step in its own `<a:p>` paragraph instead of concatenating everything into one run
 
-3. **Unpack**: `python scripts/office/unpack.py template.pptx unpacked/`
+6. **Clean**:
+   ```bash
+   python scripts\clean.py unpacked
+   ```
 
-4. **Build presentation** (do this yourself, not with subagents):
-   - Delete unwanted slides (remove from `<p:sldIdLst>`)
-   - Duplicate slides you want to reuse (`add_slide.py`)
-   - Reorder slides in `<p:sldIdLst>`
-   - **Complete all structural changes before step 5**
+7. **Pack**:
+   ```bash
+   python scripts\office\pack.py unpacked output.pptx --original template.pptx
+   ```
 
-5. **Edit content**: Update text in each `slide{N}.xml`.
-   **Use subagents here if available** — slides are separate XML files, so subagents can edit in parallel.
-
-6. **Clean**: `python scripts/clean.py unpacked/`
-
-7. **Pack**: `python scripts/office/pack.py unpacked/ output.pptx --original template.pptx`
+8. **QA**:
+   ```bash
+   python -m markitdown output.pptx
+   python -m markitdown output.pptx | rg -i "xxxx|lorem|ipsum|this.*(page|slide).*layout"
+   ```
+   Then render to PDF or images for a visual review.
 
 ---
 
@@ -47,159 +53,56 @@ When using an existing presentation as a template:
 
 | Script | Purpose |
 |--------|---------|
-| `unpack.py` | Extract and pretty-print PPTX |
-| `add_slide.py` | Duplicate slide or create from layout |
-| `clean.py` | Remove orphaned files |
-| `pack.py` | Repack with validation |
-| `thumbnail.py` | Create visual grid of slides |
+| `scripts\office\unpack.py` | Extract and pretty-print PPTX XML |
+| `scripts\add_slide.py` | Duplicate a slide or create one from a layout |
+| `scripts\clean.py` | Remove orphaned slides, rels, and media |
+| `scripts\office\pack.py` | Repack and validate the edited deck |
+| `scripts\thumbnail.py` | Create a slide thumbnail grid for template analysis |
 
-### unpack.py
+## Slide operations
+Slide order lives in `ppt\presentation.xml` inside `<p:sldIdLst>`.
 
-```bash
-python scripts/office/unpack.py input.pptx unpacked/
-```
+- **Reorder**: rearrange the `<p:sldId>` elements
+- **Delete**: remove the `<p:sldId>` entry, then run `clean.py`
+- **Add**: use `add_slide.py`; do not manually copy slide files because the script updates relationships and content types for you
 
-Extracts PPTX, pretty-prints XML, escapes smart quotes.
+## Editing content safely
+- Edit the slide XML precisely; do not do broad search-and-replace across the whole deck unless you have inspected the effect
+- Preserve existing formatting runs and paragraph properties when possible
+- Bold slide titles, section headers, and inline labels with `b="1"` on `<a:rPr>`
+- Never use literal Unicode bullet characters; use the slide's existing list structures such as `<a:buChar>` or `<a:buAutoNum>`
+- Copy the original `<a:pPr>` when splitting or expanding content so line spacing and indentation stay consistent
 
-### add_slide.py
+### Multi-item content
+If the source has multiple steps or bullet items, create separate `<a:p>` elements for each one.
 
-```bash
-python scripts/add_slide.py unpacked/ slide2.xml      # Duplicate slide
-python scripts/add_slide.py unpacked/ slideLayout2.xml # From layout
-```
+**Wrong:** one paragraph containing every step as a long sentence.
 
-Prints `<p:sldId>` to add to `<p:sldIdLst>` at desired position.
+**Right:** one paragraph per step or bullet, reusing the template's paragraph settings.
 
-### clean.py
+## Smart quotes and whitespace
+The unpack and pack helpers preserve smart quotes, but when you add new text directly in XML, use entities such as `&#x201C;` and `&#x201D;` for quote marks.
 
-```bash
-python scripts/clean.py unpacked/
-```
+Add `xml:space="preserve"` to text nodes that need leading or trailing spaces.
 
-Removes slides not in `<p:sldIdLst>`, unreferenced media, orphaned rels.
-
-### pack.py
-
-```bash
-python scripts/office/pack.py unpacked/ output.pptx --original input.pptx
-```
-
-Validates, repairs, condenses XML, re-encodes smart quotes.
-
-### thumbnail.py
+## Visual QA
+Render the deck after every substantial round of edits.
 
 ```bash
-python scripts/thumbnail.py input.pptx [output_prefix] [--cols N]
+python scripts\office\soffice.py --headless --convert-to pdf output.pptx
+pdftoppm -jpeg -r 150 output.pdf slide
 ```
 
-Creates `thumbnails.jpg` with slide filenames as labels. Default 3 columns, max 12 per grid.
+Check the rendered slides for:
+- overlapping shapes or text
+- cut-off text and narrow text boxes
+- leftover placeholders or empty template cards
+- uneven spacing or poor alignment
+- low contrast between text and the background
+- objects sitting too close to the slide edge
 
-**Use for template analysis only** (choosing layouts). For visual QA, use `soffice` + `pdftoppm` to create full-resolution individual slide images—see SKILL.md.
-
----
-
-## Slide Operations
-
-Slide order is in `ppt/presentation.xml` → `<p:sldIdLst>`.
-
-**Reorder**: Rearrange `<p:sldId>` elements.
-
-**Delete**: Remove `<p:sldId>`, then run `clean.py`.
-
-**Add**: Use `add_slide.py`. Never manually copy slide files—the script handles notes references, Content_Types.xml, and relationship IDs that manual copying misses.
-
----
-
-## Editing Content
-
-**Subagents:** If available, use them here (after completing step 4). Each slide is a separate XML file, so subagents can edit in parallel. In your prompt to subagents, include:
-- The slide file path(s) to edit
-- **"Use the Edit tool for all changes"**
-- The formatting rules and common pitfalls below
-
-For each slide:
-1. Read the slide's XML
-2. Identify ALL placeholder content—text, images, charts, icons, captions
-3. Replace each placeholder with final content
-
-**Use the Edit tool, not sed or Python scripts.** The Edit tool forces specificity about what to replace and where, yielding better reliability.
-
-### Formatting Rules
-
-- **Bold all headers, subheadings, and inline labels**: Use `b="1"` on `<a:rPr>`. This includes:
-  - Slide titles
-  - Section headers within a slide
-  - Inline labels like (e.g.: "Status:", "Description:") at the start of a line
-- **Never use unicode bullets (•)**: Use proper list formatting with `<a:buChar>` or `<a:buAutoNum>`
-- **Bullet consistency**: Let bullets inherit from the layout. Only specify `<a:buChar>` or `<a:buNone>`.
-
----
-
-## Common Pitfalls
-
-### Template Adaptation
-
-When source content has fewer items than the template:
-- **Remove excess elements entirely** (images, shapes, text boxes), don't just clear text
-- Check for orphaned visuals after clearing text content
-- Run visual QA to catch mismatched counts
-
-When replacing text with different length content:
-- **Shorter replacements**: Usually safe
-- **Longer replacements**: May overflow or wrap unexpectedly
-- Test with visual QA after text changes
-- Consider truncating or splitting content to fit the template's design constraints
-
-**Template slots ≠ Source items**: If template has 4 team members but source has 3 users, delete the 4th member's entire group (image + text boxes), not just the text.
-
-### Multi-Item Content
-
-If source has multiple items (numbered lists, multiple sections), create separate `<a:p>` elements for each — **never concatenate into one string**.
-
-**❌ WRONG** — all items in one paragraph:
-```xml
-<a:p>
-  <a:r><a:rPr .../><a:t>Step 1: Do the first thing. Step 2: Do the second thing.</a:t></a:r>
-</a:p>
-```
-
-**✅ CORRECT** — separate paragraphs with bold headers:
-```xml
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" b="1" .../><a:t>Step 1</a:t></a:r>
-</a:p>
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" .../><a:t>Do the first thing.</a:t></a:r>
-</a:p>
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" b="1" .../><a:t>Step 2</a:t></a:r>
-</a:p>
-<!-- continue pattern -->
-```
-
-Copy `<a:pPr>` from the original paragraph to preserve line spacing. Use `b="1"` on headers.
-
-### Smart Quotes
-
-Handled automatically by unpack/pack. But the Edit tool converts smart quotes to ASCII.
-
-**When adding new text with quotes, use XML entities:**
-
-```xml
-<a:t>the &#x201C;Agreement&#x201D;</a:t>
-```
-
-| Character | Name | Unicode | XML Entity |
-|-----------|------|---------|------------|
-| `“` | Left double quote | U+201C | `&#x201C;` |
-| `”` | Right double quote | U+201D | `&#x201D;` |
-| `‘` | Left single quote | U+2018 | `&#x2018;` |
-| `’` | Right single quote | U+2019 | `&#x2019;` |
-
-### Other
-
-- **Whitespace**: Use `xml:space="preserve"` on `<a:t>` with leading/trailing spaces
-- **XML parsing**: Use `defusedxml.minidom`, not `xml.etree.ElementTree` (corrupts namespaces)
+## Common pitfalls
+- Clearing text but forgetting to remove the matching image, icon, or shape
+- Stretching a template beyond its capacity instead of deleting unused elements
+- Letting long replacement text wrap into design elements
+- Forgetting to run `clean.py` after deleting or duplicating slides
