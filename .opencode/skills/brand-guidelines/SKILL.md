@@ -1,73 +1,60 @@
 ---
 name: brand-guidelines
-description: Applies Anthropic's official brand colors and typography to any sort of artifact that may benefit from having Anthropic's look-and-feel. Use it when brand colors or style guidelines, visual formatting, or company design standards apply.
-license: Complete terms in LICENSE.txt
+description: Create or extract reusable brand packs with palette, type, voice, tokens, and usage rules.
 ---
 
-# Anthropic Brand Styling
+# Brand Guidelines
 
-## Overview
+## Use when
+- The user needs a brand pack, style guide, design tokens, or a reusable visual system.
+- Existing brand material must be extracted into a cleaner, more actionable reference.
+- A team needs palette, typography, spacing, imagery, and voice rules that can be applied across docs, UI, slides, or marketing assets.
 
-To access Anthropic's official brand identity and style resources, use this skill.
+## Do not use when
+- The task is only to theme one artifact; use `theme-factory` for that.
+- The task is to build the implementation itself; use `frontend-design` for UI work.
+- The user needs a single illustration or poster rather than a repeatable brand system.
 
-**Keywords**: branding, corporate identity, visual identity, post-processing, styling, brand colors, typography, Anthropic brand, visual formatting, visual design
+## Capability checks and fallbacks
+1. Inventory available inputs first.
+   - Ideal inputs: existing site, deck, logo, screenshots, tokens, copy samples, or a short brand brief.
+   - If only partial inputs exist, extract what is real and clearly label assumptions.
+2. Check whether the user wants extraction or invention.
+   - Extraction: document what already exists and normalize it.
+   - Invention: create a starter brand pack and say it is a proposed system, not an official standard.
+3. If there is no design-token format in the repo, default to a readable markdown pack plus a small JSON token file.
+4. If logo files or font licenses are unavailable, document recommended usage and fallbacks rather than inventing assets that cannot be delivered honestly.
 
-## Brand Guidelines
+## Default workflow
+1. Gather inputs and identify the brand's audience, market position, and personality.
+2. Distill the core system:
+   - promise or essence,
+   - tone keywords,
+   - audience cues,
+   - visual constraints.
+3. Build the practical brand pack:
+   - color roles,
+   - typography pairings and fallbacks,
+   - spacing and shape language,
+   - imagery and icon direction,
+   - voice and copy guidance,
+   - do and do-not examples.
+4. Convert the pack into implementation-friendly tokens when useful.
+5. If asked to apply the brand immediately, map the system into the target medium after the pack is coherent.
 
-### Colors
+## Resource map
+- `templates\brand-pack-template.md`: reusable outline for a markdown brand pack.
+- `templates\brand-tokens.json`: starter token structure for colors, typography, spacing, and voice cues.
 
-**Main Colors:**
+## Output contract
+Return or create:
+- a brand pack (`brand-pack.md` or equivalent),
+- structured tokens (`brand-tokens.json`, CSS variables, or similar) when helpful,
+- a short note describing assumptions, missing inputs, or areas that still need stakeholder review.
 
-- Dark: `#141413` - Primary text and dark backgrounds
-- Light: `#faf9f5` - Light backgrounds and text on dark
-- Mid Gray: `#b0aea5` - Secondary elements
-- Light Gray: `#e8e6dc` - Subtle backgrounds
-
-**Accent Colors:**
-
-- Orange: `#d97757` - Primary accent
-- Blue: `#6a9bcc` - Secondary accent
-- Green: `#788c5d` - Tertiary accent
-
-### Typography
-
-- **Headings**: Poppins (with Arial fallback)
-- **Body Text**: Lora (with Georgia fallback)
-- **Note**: Fonts should be pre-installed in your environment for best results
-
-## Features
-
-### Smart Font Application
-
-- Applies Poppins font to headings (24pt and larger)
-- Applies Lora font to body text
-- Automatically falls back to Arial/Georgia if custom fonts unavailable
-- Preserves readability across all systems
-
-### Text Styling
-
-- Headings (24pt+): Poppins font
-- Body text: Lora font
-- Smart color selection based on background
-- Preserves text hierarchy and formatting
-
-### Shape and Accent Colors
-
-- Non-text shapes use accent colors
-- Cycles through orange, blue, and green accents
-- Maintains visual interest while staying on-brand
-
-## Technical Details
-
-### Font Management
-
-- Uses system-installed Poppins and Lora fonts when available
-- Provides automatic fallback to Arial (headings) and Georgia (body)
-- No font installation required - works with existing system fonts
-- For best results, pre-install Poppins and Lora fonts in your environment
-
-### Color Application
-
-- Uses RGB color values for precise brand matching
-- Applied via python-pptx's RGBColor class
-- Maintains color fidelity across different systems
+## Validation checklist
+- The pack can be used by someone who was not in the original conversation.
+- Colors have clear roles, not just a list of swatches.
+- Typography choices include realistic fallbacks.
+- Voice guidance is concrete enough to steer copy decisions.
+- Any inferred decisions are clearly marked as proposed rather than official.

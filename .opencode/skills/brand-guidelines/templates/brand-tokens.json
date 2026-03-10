@@ -1,0 +1,46 @@
+{
+  "brand": {
+    "name": "[Brand Name]",
+    "essence": "[One-line brand essence]",
+    "audience": ["[Primary audience]"]
+  },
+  "personality": {
+    "keywords": ["clear", "bold", "warm"],
+    "avoid": ["generic", "noisy", "cold"]
+  },
+  "colors": {
+    "background": "#F8FAFC",
+    "surface": "#E2E8F0",
+    "text": "#0F172A",
+    "muted": "#64748B",
+    "primary": "#2563EB",
+    "secondary": "#7C3AED",
+    "accent": ["#F97316", "#14B8A6"]
+  },
+  "typography": {
+    "display": {
+      "family": "[Display font]",
+      "fallback": "Georgia, serif"
+    },
+    "body": {
+      "family": "[Body font]",
+      "fallback": "Segoe UI, sans-serif"
+    },
+    "mono": {
+      "family": "[Mono font]",
+      "fallback": "Consolas, monospace"
+    }
+  },
+  "spacing": {
+    "base": 8,
+    "radius": {
+      "sm": 6,
+      "md": 12,
+      "lg": 20
+    }
+  },
+  "voice": {
+    "tone": ["confident", "helpful", "specific"],
+    "avoid": ["vague", "overhyped"]
+  }
+}
