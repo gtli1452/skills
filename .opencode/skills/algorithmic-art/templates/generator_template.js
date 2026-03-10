@@ -15,14 +15,14 @@
 // ============================================================================
 // 1. PARAMETER ORGANIZATION
 // ============================================================================
-// Keep all tunable parameters in one object
+// Keep all tunable parameters in one object.
 // This makes it easy to:
 // - Connect to UI controls
 // - Reset to defaults
-// - Serialize/save configurations
+// - Serialize or save configurations
 
 let params = {
-    // Define parameters that match YOUR algorithm
+    // Define parameters that match YOUR algorithm.
     // Examples (customize for your art):
     // - Counts: how many elements (particles, circles, branches, etc.)
     // - Scales: size, speed, spacing
@@ -31,19 +31,19 @@ let params = {
     // - Colors: palette arrays
 
     seed: 12345,
-    // define colorPalette as an array -- choose whatever colors you'd like ['#d97757', '#6a9bcc', '#788c5d', '#b0aea5']
-    // Add YOUR parameters here based on your algorithm
+    // Example palette only - replace with something that fits your piece:
+    // colorPalette: ['#2563eb', '#0f766e', '#f59e0b', '#111827']
 };
 
 // ============================================================================
 // 2. SEEDED RANDOMNESS (Critical for reproducibility)
 // ============================================================================
-// ALWAYS use seeded random for Art Blocks-style reproducible output
+// ALWAYS use seeded random for reproducible output.
 
 function initializeSeed(seed) {
     randomSeed(seed);
     noiseSeed(seed);
-    // Now all random() and noise() calls will be deterministic
+    // Now all random() and noise() calls will be deterministic.
 }
 
 // ============================================================================
@@ -53,18 +53,18 @@ function initializeSeed(seed) {
 function setup() {
     createCanvas(800, 800);
 
-    // Initialize seed first
+    // Initialize seed first.
     initializeSeed(params.seed);
 
-    // Set up your generative system
+    // Set up your generative system.
     // This is where you initialize:
     // - Arrays of objects
     // - Grid structures
     // - Initial positions
     // - Starting states
 
-    // For static art: call noLoop() at the end of setup
-    // For animated art: let draw() keep running
+    // For static art: call noLoop() at the end of setup.
+    // For animated art: let draw() keep running.
 }
 
 function draw() {
@@ -86,17 +86,17 @@ function draw() {
 // ============================================================================
 // 4. CLASS STRUCTURE (When you need objects)
 // ============================================================================
-// Use classes when your algorithm involves multiple entities
+// Use classes when your algorithm involves multiple entities.
 // Examples: particles, agents, cells, nodes, etc.
 
 class Entity {
     constructor() {
-        // Initialize entity properties
-        // Use random() here - it will be seeded
+        // Initialize entity properties.
+        // Use random() here - it will be seeded.
     }
 
     update() {
-        // Update entity state
+        // Update entity state.
         // This might involve:
         // - Physics calculations
         // - Behavioral rules
@@ -104,8 +104,8 @@ class Entity {
     }
 
     display() {
-        // Render the entity
-        // Keep rendering logic separate from update logic
+        // Render the entity.
+        // Keep rendering logic separate from update logic.
     }
 }
 
@@ -164,24 +164,24 @@ function wrapAround(value, max) {
 
 function updateParameter(paramName, value) {
     params[paramName] = value;
-    // Decide if you need to regenerate or just update
-    // Some params can update in real-time, others need full regeneration
+    // Decide if you need to regenerate or just update.
+    // Some params can update in real time, others need full regeneration.
 }
 
 function regenerate() {
-    // Reinitialize your generative system
-    // Useful when parameters change significantly
+    // Reinitialize your generative system.
+    // Useful when parameters change significantly.
     initializeSeed(params.seed);
-    // Then regenerate your system
+    // Then regenerate your system.
 }
 
 // ============================================================================
 // 8. COMMON P5.JS PATTERNS
 // ============================================================================
 
-// Drawing with transparency for trails/fading
+// Drawing with transparency for trails or fading.
 function fadeBackground(opacity) {
-    fill(250, 249, 245, opacity); // Anthropic light with alpha
+    fill(244, 244, 239, opacity); // Neutral paper tone with alpha
     noStroke();
     rect(0, 0, width, height);
 }
