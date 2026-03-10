@@ -377,7 +377,7 @@ Remember to parallelize solving tasks to avoid running out of context, then accu
 
 # Running Evaluations
 
-After creating your evaluation file, you can use the provided evaluation harness to test your MCP server.
+After creating your evaluation file, you can use the provided evaluation harness to test your MCP server with any tool-calling model that is reachable through an OpenAI-compatible chat completions endpoint. This keeps the workflow portable across local open-model runtimes, hosted gateways, and vendor-specific proxies.
 
 ## Setup
 
@@ -389,14 +389,19 @@ After creating your evaluation file, you can use the provided evaluation harness
 
    Or install manually:
    ```bash
-   pip install anthropic mcp
+   pip install mcp
    ```
 
-2. **Set API Key**
+2. **Configure a Model Endpoint**
 
    ```bash
-   export ANTHROPIC_API_KEY=your_api_key_here
+   export LLM_BASE_URL=http://localhost:11434/v1
+   export LLM_MODEL=your-tool-calling-model
+   # Optional if your endpoint requires auth:
+   export LLM_API_KEY=your_api_key_here
    ```
+
+   The harness also accepts `OPENAI_BASE_URL`, `OPENAI_MODEL`, and `OPENAI_API_KEY` for compatibility with gateways that already use those names.
 
 ## Evaluation File Format
 
@@ -417,11 +422,12 @@ Evaluation files use XML format with `<qa_pair>` elements:
 
 ## Running Evaluations
 
-The evaluation script (`scripts/evaluation.py`) supports three transport types:
+The evaluation script (`scripts/evaluation.py`) supports three MCP transport types:
 
 **Important:**
 - **stdio transport**: The evaluation script automatically launches and manages the MCP server process for you. Do not run the server manually.
 - **sse/http transports**: You must start the MCP server separately before running the evaluation. The script connects to the already-running server at the specified URL.
+- The model endpoint is configured separately with `--model`, `--llm-base-url`, and related options.
 
 ### 1. Local STDIO Server
 
@@ -429,6 +435,8 @@ For locally-run MCP servers (script launches the server automatically):
 
 ```bash
 python scripts/evaluation.py \
+  --llm-base-url http://localhost:11434/v1 \
+  --model your-tool-calling-model \
   -t stdio \
   -c python \
   -a my_mcp_server.py \
@@ -438,6 +446,9 @@ python scripts/evaluation.py \
 With environment variables:
 ```bash
 python scripts/evaluation.py \
+  --llm-base-url https://api.example.com/v1 \
+  --model provider/model-name \
+  --llm-api-key your_api_key_here \
   -t stdio \
   -c python \
   -a my_mcp_server.py \
@@ -452,6 +463,9 @@ For SSE-based MCP servers (you must start the server first):
 
 ```bash
 python scripts/evaluation.py \
+  --llm-base-url https://api.example.com/v1 \
+  --model provider/model-name \
+  --llm-api-key your_api_key_here \
   -t sse \
   -u https://example.com/mcp \
   -H "Authorization: Bearer token123" \
@@ -465,6 +479,9 @@ For HTTP-based MCP servers (you must start the server first):
 
 ```bash
 python scripts/evaluation.py \
+  --llm-base-url https://api.example.com/v1 \
+  --model provider/model-name \
+  --llm-api-key your_api_key_here \
   -t http \
   -u https://example.com/mcp \
   -H "Authorization: Bearer token123" \
@@ -474,7 +491,10 @@ python scripts/evaluation.py \
 ## Command-Line Options
 
 ```
-usage: evaluation.py [-h] [-t {stdio,sse,http}] [-m MODEL] [-c COMMAND]
+usage: evaluation.py [-h] [-t {stdio,sse,http}] [-m MODEL]
+                     [--llm-base-url LLM_BASE_URL] [--llm-api-key LLM_API_KEY]
+                     [--llm-header LLM_HEADERS [LLM_HEADERS ...]]
+                     [--request-timeout REQUEST_TIMEOUT] [-c COMMAND]
                      [-a ARGS [ARGS ...]] [-e ENV [ENV ...]] [-u URL]
                      [-H HEADERS [HEADERS ...]] [-o OUTPUT]
                      eval_file
@@ -485,7 +505,11 @@ positional arguments:
 optional arguments:
   -h, --help            Show help message
   -t, --transport       Transport type: stdio, sse, or http (default: stdio)
-  -m, --model           Claude model to use (default: claude-3-7-sonnet-20250219)
+  -m, --model           Tool-calling model to use
+  --llm-base-url        Base URL for an OpenAI-compatible chat completions API
+  --llm-api-key         API key for the model endpoint
+  --llm-header          Additional model API headers in 'Key: Value' format
+  --request-timeout     Model API request timeout in seconds (default: 300)
   -o, --output          Output file for report (default: print to stdout)
 
 stdio options:
@@ -520,6 +544,8 @@ The evaluation script generates a detailed report including:
 
 ```bash
 python scripts/evaluation.py \
+  --llm-base-url http://localhost:11434/v1 \
+  --model your-tool-calling-model \
   -t stdio \
   -c python \
   -a my_server.py \
@@ -550,17 +576,20 @@ Here's a complete example of creating and running an evaluation:
 </evaluation>
 ```
 
-2. **Install dependencies**:
+2. **Install dependencies and configure a model endpoint**:
 
 ```bash
 pip install -r scripts/requirements.txt
-export ANTHROPIC_API_KEY=your_api_key
+export LLM_BASE_URL=http://localhost:11434/v1
+export LLM_MODEL=your-tool-calling-model
 ```
 
 3. **Run evaluation**:
 
 ```bash
 python scripts/evaluation.py \
+  --llm-base-url $LLM_BASE_URL \
+  --model $LLM_MODEL \
   -t stdio \
   -c python \
   -a github_mcp_server.py \
@@ -582,6 +611,7 @@ python scripts/evaluation.py \
 If you get connection errors:
 - **STDIO**: Verify the command and arguments are correct
 - **SSE/HTTP**: Check the URL is accessible and headers are correct
+- **Model endpoint**: Verify `--llm-base-url`, `--model`, and any required model credentials/headers
 - Ensure any required API keys are set in environment variables or headers
 
 ### Low Accuracy
@@ -596,7 +626,7 @@ If many evaluations fail:
 ### Timeout Issues
 
 If tasks are timing out:
-- Use a more capable model (e.g., `claude-3-7-sonnet-20250219`)
+- Use a stronger tool-calling model or one with a larger context window
 - Check if tools are returning too much data
 - Verify pagination is working correctly
 - Consider simplifying complex questions
