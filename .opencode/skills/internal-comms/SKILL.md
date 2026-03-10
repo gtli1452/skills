@@ -1,32 +1,54 @@
 ---
 name: internal-comms
-description: A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.).
-license: Complete terms in LICENSE.txt
+description: Draft concise internal updates, FAQs, newsletters, and status messages from local source material.
 ---
 
-## When to use this skill
-To write internal communications, use this skill for:
-- 3P updates (Progress, Plans, Problems)
-- Company newsletters
-- FAQ responses
-- Status reports
-- Leadership updates
-- Project updates
-- Incident reports
+# Internal Comms
 
-## How to use this skill
+## Use when
+- The user needs an internal status update, FAQ, newsletter, leadership note, incident update, or other employee-facing communication.
+- The content should be grounded in real source material such as notes, docs, tickets, or pasted updates.
+- The output needs to be concise, readable, and easy to circulate asynchronously.
 
-To write any internal communication:
+## Do not use when
+- The task is a long-form proposal or specification; use `doc-coauthoring`.
+- The audience is external press, customers, or marketing channels.
+- The request is mostly visual styling rather than writing.
 
-1. **Identify the communication type** from the request
-2. **Load the appropriate guideline file** from the `examples/` directory:
-    - `examples/3p-updates.md` - For Progress/Plans/Problems team updates
-    - `examples/company-newsletter.md` - For company-wide newsletters
-    - `examples/faq-answers.md` - For answering frequently asked questions
-    - `examples/general-comms.md` - For anything else that doesn't explicitly match one of the above
-3. **Follow the specific instructions** in that file for formatting, tone, and content gathering
+## Capability checks and fallbacks
+1. Identify the audience, time window, and channel before drafting.
+   - A weekly team update and a company-wide note should not sound the same.
+2. Check what source material exists.
+   - If official notes or documents exist, use them as the factual backbone.
+   - If context is incomplete, draft carefully and label assumptions or missing facts.
+3. Pick the closest reference format from `examples\`.
+   - Use the exact format when one clearly fits.
+   - Default to `examples\general-comms.md` when the request is unusual.
+4. If links, owners, or dates are unknown, use placeholders or explicit follow-up notes rather than inventing details.
 
-If the communication type doesn't match any existing guideline, ask for clarification or more context about the desired format.
+## Default workflow
+1. Gather the audience, purpose, channel, timing, and call to action.
+2. Pull the key facts from the available material and group them by importance.
+3. Choose the closest format reference from `examples\`.
+4. Draft the message so the most important information lands first.
+5. Tighten for brevity, clarity, and confidence without overstating unknowns.
+6. Validate every claim against the available source material before finalizing.
 
-## Keywords
-3P updates, company newsletter, company comms, weekly update, faqs, common questions, updates, internal comms
+## Resource map
+- `examples\3p-updates.md`: compact progress, plans, problems format.
+- `examples\company-newsletter.md`: company-wide roundup structure.
+- `examples\faq-answers.md`: recurring-question format.
+- `examples\general-comms.md`: fallback structure for other internal announcements.
+
+## Output contract
+Return or create:
+- the final communication draft,
+- a short note on any placeholders, missing facts, or suggested follow-up links,
+- alternate subject line or heading options when the channel needs them.
+
+## Validation checklist
+- The audience and call to action are obvious.
+- The message is sourced, concise, and not padded with generic filler.
+- Facts, dates, and metrics are either verified or clearly marked as tentative.
+- The format matches the communication type.
+- Someone skimming quickly can still understand the main point.

@@ -1,16 +1,29 @@
-  ## Instructions
-  You are being asked to write internal company communication that doesn't fit into the standard formats (3P
-  updates, newsletters, or FAQs).
+# General Internal Comms
 
-  Before proceeding:
-  1. Ask the user about their target audience
-  2. Understand the communication's purpose
-  3. Clarify the desired tone (formal, casual, urgent, informational)
-  4. Confirm any specific formatting requirements
+Use this for internal messages that do not cleanly fit 3Ps, newsletters, or FAQ answers.
 
-  Use these general principles:
-  - Be clear and concise
-  - Use active voice
-  - Put the most important information first
-  - Include relevant links and references
-  - Match the company's communication style
+## Inputs to collect
+- Audience
+- Purpose
+- Channel or destination
+- Timing or deadline
+- Required action, if any
+- Links, owners, or supporting references
+
+## Draft structure
+1. **Heading or subject line**
+2. **Why this matters now**
+3. **What changed or what people should know**
+4. **What people need to do next**
+5. **Where to learn more**
+
+## Guidance
+- Lead with the main point.
+- Use active voice and plain language.
+- Be specific about deadlines, owners, and calls to action.
+- Remove throat-clearing and filler before sending.
+
+## Validation
+- The first paragraph makes the purpose obvious.
+- The audience knows whether action is required.
+- Dates, links, and owner names are present or clearly marked as missing.
