@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "📦 Bundling React app to single HTML artifact..."
+echo "📦 Bundling React app into a single HTML file..."
 
 # Check if we're in a project directory
 if [ ! -f "package.json" ]; then
@@ -17,7 +17,7 @@ if [ ! -f "index.html" ]; then
 fi
 
 # Install bundling dependencies
-echo "📦 Installing bundling dependencies..."
+echo "📦 Installing bundling dependencies into the local project..."
 pnpm add -D parcel @parcel/config-default parcel-resolver-tspaths html-inline
 
 # Create Parcel config with tspaths resolver
@@ -40,7 +40,7 @@ echo "🔨 Building with Parcel..."
 pnpm exec parcel build index.html --dist-dir dist --no-source-maps
 
 # Inline everything into single HTML
-echo "🎯 Inlining all assets into single HTML file..."
+echo "🎯 Inlining assets into bundle.html..."
 pnpm exec html-inline dist/index.html > bundle.html
 
 # Get file size
@@ -50,5 +50,5 @@ echo ""
 echo "✅ Bundle complete!"
 echo "📄 Output: bundle.html ($FILE_SIZE)"
 echo ""
-echo "You can now use this single HTML file as an artifact in Claude conversations."
+echo "Open this file directly in a browser or share it as a portable local build."
 echo "To test locally: open bundle.html in your browser"

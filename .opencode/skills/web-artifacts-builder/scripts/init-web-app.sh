@@ -3,6 +3,8 @@
 # Exit on error
 set -e
 
+SCRIPT_NAME="$(basename "$0")"
+
 # Detect Node version
 NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
 
@@ -32,13 +34,14 @@ fi
 
 # Check if pnpm is installed
 if ! command -v pnpm &> /dev/null; then
-  echo "📦 pnpm not found. Installing pnpm..."
-  npm install -g pnpm
+  echo "❌ pnpm is required but was not found."
+  echo "   Install it first (for example: npm install -g pnpm) and rerun this script."
+  exit 1
 fi
 
 # Check if project name is provided
 if [ -z "$1" ]; then
-  echo "❌ Usage: ./create-react-shadcn-complete.sh <project-name>"
+  echo "❌ Usage: ./$SCRIPT_NAME <project-name>"
   exit 1
 fi
 
@@ -240,10 +243,9 @@ node -e "
 const fs = require('fs');
 const path = 'tsconfig.app.json';
 const content = fs.readFileSync(path, 'utf8');
-// Remove comments manually
 const lines = content.split('\n').filter(line => !line.trim().startsWith('//'));
 const jsonContent = lines.join('\n');
-const config = JSON.parse(jsonContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/,(\s*[}\]])/g, '\$1'));
+const config = JSON.parse(jsonContent.replace(/\/\*[\s\S]*?\*\//g, '').replace(/,(\s*[}\]])/g, '$1'));
 config.compilerOptions = config.compilerOptions || {};
 config.compilerOptions.baseUrl = '.';
 config.compilerOptions.paths = { '@/*': ['./src/*'] };
@@ -312,7 +314,7 @@ echo "  - popover, progress, radio-group, resizable, scroll-area"
 echo "  - select, separator, sheet, skeleton, slider, sonner"
 echo "  - switch, table, tabs, textarea, toast, toggle, toggle-group, tooltip"
 echo ""
-echo "To start developing:"
+echo "To start developing locally:"
 echo "  cd $PROJECT_NAME"
 echo "  pnpm dev"
 echo ""

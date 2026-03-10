@@ -1,19 +1,19 @@
 ---
 name: web-artifacts-builder
-description: Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX artifacts.
+description: Suite of tools for creating elaborate, multi-component local web apps using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use it for complex web UIs requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX pages.
 license: Complete terms in LICENSE.txt
 ---
 
-# Web Artifacts Builder
+# Web App Builder
 
-To build powerful frontend claude.ai artifacts, follow these steps:
-1. Initialize the frontend repo using `scripts/init-artifact.sh`
-2. Develop your artifact by editing the generated code
-3. Bundle all code into a single HTML file using `scripts/bundle-artifact.sh`
-4. Display artifact to user
-5. (Optional) Test the artifact
+To build substantial local web apps in OpenCode, follow these steps:
+1. Initialize the frontend repo using `scripts/init-web-app.sh`
+2. Develop the app by editing the generated code
+3. Preview locally with `pnpm dev`
+4. (Optional) Bundle the app into a single self-contained HTML file using `scripts/bundle-web-app.sh`
+5. (Optional) Test the app or bundle
 
-**Stack**: React 18 + TypeScript + Vite + Parcel (bundling) + Tailwind CSS + shadcn/ui
+**Stack**: React 18 + TypeScript + Vite + Parcel (single-file bundling) + Tailwind CSS + shadcn/ui
 
 ## Design & Style Guidelines
 
@@ -25,7 +25,7 @@ VERY IMPORTANT: To avoid what is often referred to as "AI slop", avoid using exc
 
 Run the initialization script to create a new React project:
 ```bash
-bash scripts/init-artifact.sh <project-name>
+bash scripts/init-web-app.sh <project-name>
 cd <project-name>
 ```
 
@@ -35,39 +35,49 @@ This creates a fully configured project with:
 - ✅ Path aliases (`@/`) configured
 - ✅ 40+ shadcn/ui components pre-installed
 - ✅ All Radix UI dependencies included
-- ✅ Parcel configured for bundling (via .parcelrc)
-- ✅ Node 18+ compatibility (auto-detects and pins Vite version)
+- ✅ Parcel configured for single-file bundling (via `.parcelrc`)
+- ✅ Node 18+ compatibility (auto-detects and pins the appropriate Vite version)
 
-### Step 2: Develop Your Artifact
+### Step 2: Develop the App
 
-To build the artifact, edit the generated files. See **Common Development Tasks** below for guidance.
+Edit the generated files to build the requested interface. For many requests, `src/App.tsx`, `src/index.css`, and a small component tree are enough. For larger requests, create routes, state management, and additional components as needed.
 
-### Step 3: Bundle to Single HTML File
+### Step 3: Preview Locally
 
-To bundle the React app into a single HTML artifact:
+Start the dev server while implementing:
 ```bash
-bash scripts/bundle-artifact.sh
+pnpm dev
 ```
 
-This creates `bundle.html` - a self-contained artifact with all JavaScript, CSS, and dependencies inlined. This file can be directly shared in Claude conversations as an artifact.
+Use the Vite preview loop as the default OpenCode workflow. This is the fastest way to inspect and iterate on the app before worrying about single-file export.
+
+### Step 4: Bundle to a Single HTML File (Optional)
+
+If a portable one-file deliverable is useful, run:
+```bash
+bash scripts/bundle-web-app.sh
+```
+
+This creates `bundle.html` - a self-contained local HTML deliverable with all JavaScript, CSS, and dependencies inlined. Open it directly in a browser or hand it off as a portable build.
 
 **Requirements**: Your project must have an `index.html` in the root directory.
 
 **What the script does**:
-- Installs bundling dependencies (parcel, @parcel/config-default, parcel-resolver-tspaths, html-inline)
-- Creates `.parcelrc` config with path alias support
+- Installs bundling dependencies into the local project
+- Creates `.parcelrc` with path-alias support
 - Builds with Parcel (no source maps)
-- Inlines all assets into single HTML using html-inline
+- Inlines assets into `bundle.html`
 
-### Step 4: Share Artifact with User
+### Step 5: Testing or Visualizing (Optional)
 
-Finally, share the bundled HTML file in conversation with the user so they can view it as an artifact.
+Use available tools (including `webapp-testing`) after the first working version exists. In general, avoid heavyweight testing up front unless the user requested it or you suspect a bug.
 
-### Step 5: Testing/Visualizing the Artifact (Optional)
+## Local Delivery Guidance
 
-Note: This is a completely optional step. Only perform if necessary or requested.
-
-To test/visualize the artifact, use available tools (including other Skills or built-in tools like Playwright or Puppeteer). In general, avoid testing the artifact upfront as it adds latency between the request and when the finished artifact can be seen. Test later, after presenting the artifact, if requested or if issues arise.
+- Default to the multi-file Vite project during development
+- Use `bundle.html` when a single-file handoff is useful
+- For larger apps or routed interfaces, provide both the source project and any bundled export
+- Include the minimum commands needed to preview locally (`pnpm install`, `pnpm dev`, `pnpm build`)
 
 ## Reference
 
