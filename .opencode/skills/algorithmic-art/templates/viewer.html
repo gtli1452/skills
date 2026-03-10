@@ -1,599 +1,319 @@
 <!DOCTYPE html>
 <!--
-    THIS IS A TEMPLATE THAT SHOULD BE USED EVERY TIME AND MODIFIED.
-    WHAT TO KEEP:
-    ✓ Overall structure (header, sidebar, main content)
-    ✓ Anthropic branding (colors, fonts, layout)
-    ✓ Seed navigation section (always include this)
-    ✓ Self-contained artifact (everything inline)
-
-    WHAT TO CREATIVELY EDIT:
-    ✗ The p5.js algorithm (implement YOUR vision)
-    ✗ The parameters (define what YOUR art needs)
-    ✗ The UI controls (match YOUR parameters)
-
-    Let your philosophy guide the implementation.
-    The world is your oyster - be creative!
+  Optional local-browser starter for generative art.
+  If CDN access is blocked, swap the p5 script tag for a vendored copy or port
+  the sketch to Canvas API using the same UI and seed controls.
 -->
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generative Art Viewer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-        /* Anthropic Brand Colors */
-        :root {
-            --anthropic-dark: #141413;
-            --anthropic-light: #faf9f5;
-            --anthropic-mid-gray: #b0aea5;
-            --anthropic-light-gray: #e8e6dc;
-            --anthropic-orange: #d97757;
-            --anthropic-blue: #6a9bcc;
-            --anthropic-green: #788c5d;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generative Art Viewer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+  <style>
+    :root {
+      --bg: #050816;
+      --panel: rgba(10, 15, 31, 0.9);
+      --surface: rgba(19, 28, 53, 0.88);
+      --border: rgba(148, 163, 184, 0.25);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #f97316;
+      --accent-3: #a78bfa;
+    }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(249, 115, 22, 0.12), transparent 28%),
+        var(--bg);
+      color: var(--text);
+    }
 
-        body {
-            font-family: 'Poppins', sans-serif;
-            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
-            min-height: 100vh;
-            color: var(--anthropic-dark);
-        }
+    .page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 24px;
+      padding: 24px;
+    }
 
-        .container {
-            display: flex;
-            min-height: 100vh;
-            padding: 20px;
-            gap: 20px;
-        }
+    .sidebar, .stage {
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+    }
 
-        /* Sidebar */
-        .sidebar {
-            width: 320px;
-            flex-shrink: 0;
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
+    .sidebar { padding: 24px; }
+    .stage {
+      padding: 24px;
+      display: grid;
+      align-content: start;
+      gap: 16px;
+    }
 
-        .sidebar h1 {
-            font-family: 'Lora', serif;
-            font-size: 24px;
-            font-weight: 500;
-            color: var(--anthropic-dark);
-            margin-bottom: 8px;
-        }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 1.5rem;
+      letter-spacing: 0.02em;
+    }
 
-        .sidebar .subtitle {
-            color: var(--anthropic-mid-gray);
-            font-size: 14px;
-            margin-bottom: 32px;
-            line-height: 1.4;
-        }
+    .subtitle, .caption {
+      color: var(--muted);
+      line-height: 1.5;
+    }
 
-        /* Control Sections */
-        .control-section {
-            margin-bottom: 32px;
-        }
+    .section { margin-top: 28px; }
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 0.92rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
 
-        .control-section h3 {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--anthropic-dark);
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+    .seed-display {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: var(--surface);
+      color: var(--text);
+      text-align: center;
+      font-family: Consolas, monospace;
+      margin-bottom: 10px;
+    }
 
-        .control-section h3::before {
-            content: '•';
-            color: var(--anthropic-orange);
-            font-weight: bold;
-        }
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
 
-        /* Seed Controls */
-        .seed-input {
-            width: 100%;
-            background: var(--anthropic-light);
-            padding: 12px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 14px;
-            margin-bottom: 12px;
-            border: 1px solid var(--anthropic-light-gray);
-            text-align: center;
-        }
+    button, input[type="number"] {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+    }
 
-        .seed-input:focus {
-            outline: none;
-            border-color: var(--anthropic-orange);
-            box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1);
-            background: white;
-        }
+    button {
+      cursor: pointer;
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
 
-        .seed-controls {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-bottom: 8px;
-        }
+    button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(56, 189, 248, 0.5);
+      background: rgba(30, 41, 59, 0.95);
+    }
 
-        .regen-button {
-            margin-bottom: 0;
-        }
+    .jump-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 10px;
+    }
 
-        /* Parameter Controls */
-        .control-group {
-            margin-bottom: 20px;
-        }
+    .control-group { margin-bottom: 18px; }
+    .control-group label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
 
-        .control-group label {
-            display: block;
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--anthropic-dark);
-            margin-bottom: 8px;
-        }
+    .control-group span { color: var(--muted); }
 
-        .slider-container {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
 
-        .slider-container input[type="range"] {
-            flex: 1;
-            height: 4px;
-            background: var(--anthropic-light-gray);
-            border-radius: 2px;
-            outline: none;
-            -webkit-appearance: none;
-        }
+    #canvas-frame {
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.92));
+      border: 1px solid var(--border);
+    }
 
-        .slider-container input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 16px;
-            height: 16px;
-            background: var(--anthropic-orange);
-            border-radius: 50%;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
+    canvas {
+      max-width: 100%;
+      height: auto !important;
+      border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
 
-        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
-            transform: scale(1.1);
-            background: #c86641;
-        }
-
-        .slider-container input[type="range"]::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            background: var(--anthropic-orange);
-            border-radius: 50%;
-            border: none;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .value-display {
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            color: var(--anthropic-mid-gray);
-            min-width: 60px;
-            text-align: right;
-        }
-
-        /* Color Pickers */
-        .color-group {
-            margin-bottom: 16px;
-        }
-
-        .color-group label {
-            display: block;
-            font-size: 12px;
-            color: var(--anthropic-mid-gray);
-            margin-bottom: 4px;
-        }
-
-        .color-picker-container {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .color-picker-container input[type="color"] {
-            width: 32px;
-            height: 32px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            background: none;
-            padding: 0;
-        }
-
-        .color-value {
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            color: var(--anthropic-mid-gray);
-        }
-
-        /* Buttons */
-        .button {
-            background: var(--anthropic-orange);
-            color: white;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            width: 100%;
-        }
-
-        .button:hover {
-            background: #c86641;
-            transform: translateY(-1px);
-        }
-
-        .button:active {
-            transform: translateY(0);
-        }
-
-        .button.secondary {
-            background: var(--anthropic-blue);
-        }
-
-        .button.secondary:hover {
-            background: #5a8bb8;
-        }
-
-        .button.tertiary {
-            background: var(--anthropic-green);
-        }
-
-        .button.tertiary:hover {
-            background: #6b7b52;
-        }
-
-        .button-row {
-            display: flex;
-            gap: 8px;
-        }
-
-        .button-row .button {
-            flex: 1;
-        }
-
-        /* Canvas Area */
-        .canvas-area {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 0;
-        }
-
-        #canvas-container {
-            width: 100%;
-            max-width: 1000px;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 20px 40px rgba(20, 20, 19, 0.1);
-            background: white;
-        }
-
-        #canvas-container canvas {
-            display: block;
-            width: 100% !important;
-            height: auto !important;
-        }
-
-        /* Loading State */
-        .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            color: var(--anthropic-mid-gray);
-        }
-
-        /* Responsive - Stack on mobile */
-        @media (max-width: 600px) {
-            .container {
-                flex-direction: column;
-            }
-
-            .sidebar {
-                width: 100%;
-            }
-
-            .canvas-area {
-                padding: 20px;
-            }
-        }
-    </style>
+    @media (max-width: 1100px) {
+      .page { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Control Sidebar -->
-        <div class="sidebar">
-            <!-- Headers (CUSTOMIZE THIS FOR YOUR ART) -->
-            <h1>TITLE - EDIT</h1>
-            <div class="subtitle">SUBHEADER - EDIT</div>
+  <div class="page">
+    <aside class="sidebar">
+      <h1>Signal Bloom</h1>
+      <p class="subtitle">A seeded starter sketch for local experimentation. Replace the title, palette, and drawing logic to match your own movement.</p>
 
-            <!-- Seed Section (ALWAYS KEEP THIS) -->
-            <div class="control-section">
-                <h3>Seed</h3>
-                <input type="number" id="seed-input" class="seed-input" value="12345" onchange="updateSeed()">
-                <div class="seed-controls">
-                    <button class="button secondary" onclick="previousSeed()">← Prev</button>
-                    <button class="button secondary" onclick="nextSeed()">Next →</button>
-                </div>
-                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">↻ Random</button>
-            </div>
-
-            <!-- Parameters Section (CUSTOMIZE THIS FOR YOUR ART) -->
-            <div class="control-section">
-                <h3>Parameters</h3>
-                
-                <!-- Particle Count -->
-                <div class="control-group">
-                    <label>Particle Count</label>
-                    <div class="slider-container">
-                        <input type="range" id="particleCount" min="1000" max="10000" step="500" value="5000" oninput="updateParam('particleCount', this.value)">
-                        <span class="value-display" id="particleCount-value">5000</span>
-                    </div>
-                </div>
-
-                <!-- Flow Speed -->
-                <div class="control-group">
-                    <label>Flow Speed</label>
-                    <div class="slider-container">
-                        <input type="range" id="flowSpeed" min="0.1" max="2.0" step="0.1" value="0.5" oninput="updateParam('flowSpeed', this.value)">
-                        <span class="value-display" id="flowSpeed-value">0.5</span>
-                    </div>
-                </div>
-
-                <!-- Noise Scale -->
-                <div class="control-group">
-                    <label>Noise Scale</label>
-                    <div class="slider-container">
-                        <input type="range" id="noiseScale" min="0.001" max="0.02" step="0.001" value="0.005" oninput="updateParam('noiseScale', this.value)">
-                        <span class="value-display" id="noiseScale-value">0.005</span>
-                    </div>
-                </div>
-
-                <!-- Trail Length -->
-                <div class="control-group">
-                    <label>Trail Length</label>
-                    <div class="slider-container">
-                        <input type="range" id="trailLength" min="2" max="20" step="1" value="8" oninput="updateParam('trailLength', this.value)">
-                        <span class="value-display" id="trailLength-value">8</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Colors Section (OPTIONAL - CUSTOMIZE OR REMOVE) -->
-            <div class="control-section">
-                <h3>Colors</h3>
-                
-                <!-- Color 1 -->
-                <div class="color-group">
-                    <label>Primary Color</label>
-                    <div class="color-picker-container">
-                        <input type="color" id="color1" value="#d97757" onchange="updateColor('color1', this.value)">
-                        <span class="color-value" id="color1-value">#d97757</span>
-                    </div>
-                </div>
-
-                <!-- Color 2 -->
-                <div class="color-group">
-                    <label>Secondary Color</label>
-                    <div class="color-picker-container">
-                        <input type="color" id="color2" value="#6a9bcc" onchange="updateColor('color2', this.value)">
-                        <span class="color-value" id="color2-value">#6a9bcc</span>
-                    </div>
-                </div>
-
-                <!-- Color 3 -->
-                <div class="color-group">
-                    <label>Accent Color</label>
-                    <div class="color-picker-container">
-                        <input type="color" id="color3" value="#788c5d" onchange="updateColor('color3', this.value)">
-                        <span class="color-value" id="color3-value">#788c5d</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Actions Section (ALWAYS KEEP THIS) -->
-            <div class="control-section">
-                <h3>Actions</h3>
-                <div class="button-row">
-                    <button class="button" onclick="resetParameters()">Reset</button>
-                </div>
-            </div>
+      <section class="section">
+        <h2>Seed</h2>
+        <div class="seed-display" id="seed-display"></div>
+        <div class="button-grid">
+          <button type="button" onclick="stepSeed(-1)">Previous</button>
+          <button type="button" onclick="stepSeed(1)">Next</button>
+          <button type="button" onclick="randomizeSeed()">Random</button>
+          <button type="button" onclick="regenerate()">Regenerate</button>
         </div>
-
-        <!-- Main Canvas Area -->
-        <div class="canvas-area">
-            <div id="canvas-container">
-                <div class="loading">Initializing generative art...</div>
-            </div>
+        <div class="jump-row">
+          <input type="number" id="jump-seed" min="1" step="1" placeholder="Jump to seed">
+          <button type="button" onclick="jumpToSeed()">Go</button>
         </div>
-    </div>
+      </section>
 
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════
-        // GENERATIVE ART PARAMETERS - CUSTOMIZE FOR YOUR ALGORITHM
-        // ═══════════════════════════════════════════════════════════════════════
+      <section class="section">
+        <h2>Parameters</h2>
+        <div class="control-group">
+          <label for="density">Density <span id="density-value"></span></label>
+          <input type="range" id="density" min="0.2" max="1" step="0.01" value="0.55" oninput="updateParameter('density', this.value, 2)">
+        </div>
+        <div class="control-group">
+          <label for="drift">Drift <span id="drift-value"></span></label>
+          <input type="range" id="drift" min="0.2" max="1.4" step="0.01" value="0.72" oninput="updateParameter('drift', this.value, 2)">
+        </div>
+        <div class="control-group">
+          <label for="scale">Field scale <span id="scale-value"></span></label>
+          <input type="range" id="scale" min="0.004" max="0.04" step="0.001" value="0.014" oninput="updateParameter('scale', this.value, 3)">
+        </div>
+      </section>
 
-        let params = {
-            seed: 12345,
-            particleCount: 5000,
-            flowSpeed: 0.5,
-            noiseScale: 0.005,
-            trailLength: 8,
-            colorPalette: ['#d97757', '#6a9bcc', '#788c5d']
-        };
+      <section class="section">
+        <h2>Actions</h2>
+        <div class="button-grid">
+          <button type="button" onclick="resetControls()">Reset</button>
+          <button type="button" onclick="downloadPng()">Download PNG</button>
+        </div>
+      </section>
+    </aside>
 
-        let defaultParams = {...params}; // Store defaults for reset
+    <main class="stage">
+      <div id="canvas-frame">
+        <div id="canvas-container"></div>
+      </div>
+      <p class="caption">This starter stays in a single HTML file so it can travel easily between repos and local previews.</p>
+    </main>
+  </div>
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // P5.JS GENERATIVE ART ALGORITHM - REPLACE WITH YOUR VISION
-        // ═══════════════════════════════════════════════════════════════════════
+  <script>
+    const defaults = {
+      seed: 12345,
+      density: 0.55,
+      drift: 0.72,
+      scale: 0.014
+    };
 
-        let particles = [];
-        let flowField = [];
-        let cols, rows;
-        let scl = 10; // Flow field resolution
+    let params = { ...defaults };
 
-        function setup() {
-            let canvas = createCanvas(1200, 1200);
-            canvas.parent('canvas-container');
-            
-            initializeSystem();
-            
-            // Remove loading message
-            document.querySelector('.loading').style.display = 'none';
+    function syncUi() {
+      document.getElementById('seed-display').textContent = `Seed ${params.seed}`;
+      document.getElementById('jump-seed').value = params.seed;
+      for (const [name, digits] of [['density', 2], ['drift', 2], ['scale', 3]]) {
+        document.getElementById(name).value = params[name];
+        document.getElementById(`${name}-value`).textContent = Number(params[name]).toFixed(digits);
+      }
+    }
+
+    function setSeed(nextSeed) {
+      params.seed = Math.max(1, Math.floor(Number(nextSeed) || 1));
+      randomSeed(params.seed);
+      noiseSeed(params.seed);
+      syncUi();
+    }
+
+    function stepSeed(delta) {
+      setSeed(params.seed + delta);
+      redraw();
+    }
+
+    function randomizeSeed() {
+      setSeed(Math.floor(Math.random() * 999999) + 1);
+      redraw();
+    }
+
+    function jumpToSeed() {
+      setSeed(document.getElementById('jump-seed').value);
+      redraw();
+    }
+
+    function regenerate() {
+      setSeed(params.seed);
+      redraw();
+    }
+
+    function resetControls() {
+      params = { ...defaults };
+      setSeed(params.seed);
+      redraw();
+    }
+
+    function updateParameter(name, value, digits) {
+      params[name] = Number(value);
+      document.getElementById(`${name}-value`).textContent = Number(value).toFixed(digits);
+      redraw();
+    }
+
+    function setup() {
+      const canvas = createCanvas(920, 920);
+      canvas.parent('canvas-container');
+      pixelDensity(2);
+      noLoop();
+      syncUi();
+    }
+
+    function draw() {
+      background('#050816');
+      setSeed(params.seed);
+      translate(width / 2, height / 2);
+      strokeWeight(1.15);
+      noFill();
+
+      const loops = Math.floor(900 + params.density * 1600);
+      const cool = color('#38bdf8');
+      const warm = color('#f97316');
+      const bloom = color('#a78bfa');
+
+      for (let i = 0; i < loops; i += 1) {
+        const angle = map(i, 0, loops, 0, TWO_PI * 18);
+        const radius = 18 + i * 0.22;
+        const wobble = noise(i * params.scale, params.seed * 0.0004) * params.drift * 240;
+        const x = cos(angle) * (radius + wobble);
+        const y = sin(angle * 1.05) * (radius - wobble * 0.35);
+        const t = noise(i * 0.003, params.seed * 0.001);
+        stroke(lerpColor(cool, warm, t));
+        point(x, y);
+        if (i % 3 === 0) {
+          stroke(red(bloom), green(bloom), blue(bloom), 48);
+          line(x, y, x * 0.92, y * 0.92);
         }
+      }
+    }
 
-        function initializeSystem() {
-            // Seed the randomness for reproducibility
-            randomSeed(params.seed);
-            noiseSeed(params.seed);
-
-            // Clear particles and recreate
-            particles = [];
-            
-            // Initialize particles
-            for (let i = 0; i < params.particleCount; i++) {
-                particles.push(new Particle());
-            }
-
-            // Calculate flow field dimensions
-            cols = floor(width / scl);
-            rows = floor(height / scl);
-            
-            // Generate flow field
-            generateFlowField();
-
-            // Clear background
-            background(250, 249, 245); // Anthropic light background
-        }
-
-        function generateFlowField() {
-          // fill this in
-        }
-
-        function draw() {
-            // fill this in
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // PARTICLE SYSTEM - CUSTOMIZE FOR YOUR ALGORITHM
-        // ═══════════════════════════════════════════════════════════════════════
-
-        class Particle {
-            constructor() {
-                // fill this in
-            }
-            // fill this in
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // UI CONTROL HANDLERS - CUSTOMIZE FOR YOUR PARAMETERS
-        // ═══════════════════════════════════════════════════════════════════════
-
-        function updateParam(paramName, value) {
-            // fill this in
-        }
-
-        function updateColor(colorId, value) {
-            // fill this in
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // SEED CONTROL FUNCTIONS - ALWAYS KEEP THESE
-        // ═══════════════════════════════════════════════════════════════════════
-
-        function updateSeedDisplay() {
-            document.getElementById('seed-input').value = params.seed;
-        }
-
-        function updateSeed() {
-            let input = document.getElementById('seed-input');
-            let newSeed = parseInt(input.value);
-            if (newSeed && newSeed > 0) {
-                params.seed = newSeed;
-                initializeSystem();
-            } else {
-                // Reset to current seed if invalid
-                updateSeedDisplay();
-            }
-        }
-
-        function previousSeed() {
-            params.seed = Math.max(1, params.seed - 1);
-            updateSeedDisplay();
-            initializeSystem();
-        }
-
-        function nextSeed() {
-            params.seed = params.seed + 1;
-            updateSeedDisplay();
-            initializeSystem();
-        }
-
-        function randomSeedAndUpdate() {
-            params.seed = Math.floor(Math.random() * 999999) + 1;
-            updateSeedDisplay();
-            initializeSystem();
-        }
-
-        function resetParameters() {
-            params = {...defaultParams};
-            
-            // Update UI elements
-            document.getElementById('particleCount').value = params.particleCount;
-            document.getElementById('particleCount-value').textContent = params.particleCount;
-            document.getElementById('flowSpeed').value = params.flowSpeed;
-            document.getElementById('flowSpeed-value').textContent = params.flowSpeed;
-            document.getElementById('noiseScale').value = params.noiseScale;
-            document.getElementById('noiseScale-value').textContent = params.noiseScale;
-            document.getElementById('trailLength').value = params.trailLength;
-            document.getElementById('trailLength-value').textContent = params.trailLength;
-            
-            // Reset colors
-            document.getElementById('color1').value = params.colorPalette[0];
-            document.getElementById('color1-value').textContent = params.colorPalette[0];
-            document.getElementById('color2').value = params.colorPalette[1];
-            document.getElementById('color2-value').textContent = params.colorPalette[1];
-            document.getElementById('color3').value = params.colorPalette[2];
-            document.getElementById('color3-value').textContent = params.colorPalette[2];
-            
-            updateSeedDisplay();
-            initializeSystem();
-        }
-
-        // Initialize UI on load
-        window.addEventListener('load', function() {
-            updateSeedDisplay();
-        });
-    </script>
+    function downloadPng() {
+      saveCanvas(`generative-art-${params.seed}`, 'png');
+    }
+  </script>
 </body>
 </html>
