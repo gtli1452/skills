@@ -1,35 +1,44 @@
 #!/usr/bin/env python3
-"""Run trigger evaluation for a skill description.
+"""Run trigger evaluation for an OpenCode skill description.
 
-Tests whether a skill's description causes Claude to trigger (read the skill)
-for a set of queries. Outputs results as JSON.
+Tests whether a skill's description causes OpenCode to load the skill via the
+native ``skill`` tool for a set of queries. Outputs results as JSON.
 """
 
 import argparse
 import json
 import os
-import select
+import shutil
 import subprocess
 import sys
-import time
-import uuid
+import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from scripts.utils import parse_skill_md
 
 
-def find_project_root() -> Path:
-    """Find the project root by walking up from cwd looking for .claude/.
+def _create_temp_skill_workspace(skill_name: str, skill_description: str) -> Path:
+    """Create a temporary OpenCode-native workspace containing only the eval skill."""
+    root = Path(tempfile.mkdtemp(prefix="opencode-skill-eval-"))
+    skill_dir = root / ".opencode" / "skills" / skill_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
 
-    Mimics how Claude Code discovers its project root, so the command file
-    we create ends up where claude -p will look for it.
-    """
-    current = Path.cwd()
-    for parent in [current, *current.parents]:
-        if (parent / ".claude").is_dir():
-            return parent
-    return current
+    description_lines = (skill_description or "").splitlines() or [""]
+    indented_description = "\n  ".join(description_lines)
+
+    skill_md = (
+        "---\n"
+        f"name: {skill_name}\n"
+        "description: |\n"
+        f"  {indented_description}\n"
+        "compatibility: opencode\n"
+        "---\n\n"
+        f"# {skill_name}\n\n"
+        "Temporary evaluation fixture used by skill-creator's description optimizer.\n"
+    )
+    (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+    return root
 
 
 def run_single_query(
@@ -37,148 +46,69 @@ def run_single_query(
     skill_name: str,
     skill_description: str,
     timeout: int,
-    project_root: str,
     model: str | None = None,
+    agent: str = "build",
 ) -> bool:
-    """Run a single query and return whether the skill was triggered.
-
-    Creates a command file in .claude/commands/ so it appears in Claude's
-    available_skills list, then runs `claude -p` with the raw query.
-    Uses --include-partial-messages to detect triggering early from
-    stream events (content_block_start) rather than waiting for the
-    full assistant message, which only arrives after tool execution.
-    """
-    unique_id = uuid.uuid4().hex[:8]
-    clean_name = f"{skill_name}-skill-{unique_id}"
-    project_commands_dir = Path(project_root) / ".claude" / "commands"
-    command_file = project_commands_dir / f"{clean_name}.md"
+    """Run a single query and return whether OpenCode loaded the target skill."""
+    workspace_root = _create_temp_skill_workspace(skill_name, skill_description)
 
     try:
-        project_commands_dir.mkdir(parents=True, exist_ok=True)
-        # Use YAML block scalar to avoid breaking on quotes in description
-        indented_desc = "\n  ".join(skill_description.split("\n"))
-        command_content = (
-            f"---\n"
-            f"description: |\n"
-            f"  {indented_desc}\n"
-            f"---\n\n"
-            f"# {skill_name}\n\n"
-            f"This skill handles: {skill_description}\n"
-        )
-        command_file.write_text(command_content)
-
-        cmd = [
-            "claude",
-            "-p", query,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-        ]
+        cmd = ["opencode", "run", "--agent", agent, "--format", "json", "--dir", str(workspace_root)]
         if model:
             cmd.extend(["--model", model])
+        cmd.append(query)
 
-        # Remove CLAUDECODE env var to allow nesting claude -p inside a
-        # Claude Code session. The guard is for interactive terminal conflicts;
-        # programmatic subprocess usage is safe.
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            cwd=project_root,
-            env=env,
-        )
-
-        triggered = False
-        start_time = time.time()
-        buffer = ""
-        # Track state for stream event detection
-        pending_tool_name = None
-        accumulated_json = ""
+        env = os.environ.copy()
+        env["OPENCODE_DISABLE_CLAUDE_CODE"] = "1"
 
         try:
-            while time.time() - start_time < timeout:
-                if process.poll() is not None:
-                    remaining = process.stdout.read()
-                    if remaining:
-                        buffer += remaining.decode("utf-8", errors="replace")
-                    break
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                timeout=timeout,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "`opencode` CLI not found on PATH. Install OpenCode to run description evals."
+            ) from exc
+        except subprocess.TimeoutExpired:
+            return False
 
-                ready, _, _ = select.select([process.stdout], [], [], 1.0)
-                if not ready:
-                    continue
+        if result.returncode != 0 and not result.stdout.strip():
+            raise RuntimeError(
+                f"`opencode run` exited {result.returncode}\nstderr: {result.stderr}"
+            )
 
-                chunk = os.read(process.stdout.fileno(), 8192)
-                if not chunk:
-                    break
-                buffer += chunk.decode("utf-8", errors="replace")
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
+            if event.get("type") != "tool_use":
+                continue
 
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+            part = event.get("part", {})
+            if part.get("tool") != "skill":
+                continue
 
-                    # Early detection via stream events
-                    if event.get("type") == "stream_event":
-                        se = event.get("event", {})
-                        se_type = se.get("type", "")
+            state = part.get("state", {})
+            if not isinstance(state, dict):
+                continue
+            input_data = state.get("input", {})
+            if isinstance(input_data, dict) and input_data.get("name") == skill_name:
+                return True
 
-                        if se_type == "content_block_start":
-                            cb = se.get("content_block", {})
-                            if cb.get("type") == "tool_use":
-                                tool_name = cb.get("name", "")
-                                if tool_name in ("Skill", "Read"):
-                                    pending_tool_name = tool_name
-                                    accumulated_json = ""
-                                else:
-                                    return False
-
-                        elif se_type == "content_block_delta" and pending_tool_name:
-                            delta = se.get("delta", {})
-                            if delta.get("type") == "input_json_delta":
-                                accumulated_json += delta.get("partial_json", "")
-                                if clean_name in accumulated_json:
-                                    return True
-
-                        elif se_type in ("content_block_stop", "message_stop"):
-                            if pending_tool_name:
-                                return clean_name in accumulated_json
-                            if se_type == "message_stop":
-                                return False
-
-                    # Fallback: full assistant message
-                    elif event.get("type") == "assistant":
-                        message = event.get("message", {})
-                        for content_item in message.get("content", []):
-                            if content_item.get("type") != "tool_use":
-                                continue
-                            tool_name = content_item.get("name", "")
-                            tool_input = content_item.get("input", {})
-                            if tool_name == "Skill" and clean_name in tool_input.get("skill", ""):
-                                triggered = True
-                            elif tool_name == "Read" and clean_name in tool_input.get("file_path", ""):
-                                triggered = True
-                            return triggered
-
-                    elif event.get("type") == "result":
-                        return triggered
-        finally:
-            # Clean up process on any exit path (return, exception, timeout)
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-
-        return triggered
+        return False
     finally:
-        if command_file.exists():
-            command_file.unlink()
+        shutil.rmtree(workspace_root, ignore_errors=True)
 
 
 def run_eval(
@@ -187,10 +117,10 @@ def run_eval(
     description: str,
     num_workers: int,
     timeout: int,
-    project_root: Path,
     runs_per_query: int = 1,
     trigger_threshold: float = 0.5,
     model: str | None = None,
+    agent: str = "build",
 ) -> dict:
     """Run the full eval set and return results."""
     results = []
@@ -205,8 +135,8 @@ def run_eval(
                     skill_name,
                     description,
                     timeout,
-                    str(project_root),
                     model,
+                    agent,
                 )
                 future_to_info[future] = (item, run_idx)
 
@@ -265,7 +195,8 @@ def main():
     parser.add_argument("--timeout", type=int, default=30, help="Timeout per query in seconds")
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
-    parser.add_argument("--model", default=None, help="Model to use for claude -p (default: user's configured model)")
+    parser.add_argument("--model", default=None, help="OpenCode model to use (default: current OpenCode model)")
+    parser.add_argument("--agent", default="build", help="Primary OpenCode agent to use for each eval run")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     args = parser.parse_args()
 
@@ -276,9 +207,8 @@ def main():
         print(f"Error: No SKILL.md found at {skill_path}", file=sys.stderr)
         sys.exit(1)
 
-    name, original_description, content = parse_skill_md(skill_path)
+    name, original_description, _ = parse_skill_md(skill_path)
     description = args.description or original_description
-    project_root = find_project_root()
 
     if args.verbose:
         print(f"Evaluating: {description}", file=sys.stderr)
@@ -289,10 +219,10 @@ def main():
         description=description,
         num_workers=args.num_workers,
         timeout=args.timeout,
-        project_root=project_root,
         runs_per_query=args.runs_per_query,
         trigger_threshold=args.trigger_threshold,
         model=args.model,
+        agent=args.agent,
     )
 
     if args.verbose:
