@@ -1,0 +1,42 @@
+{
+  "skill_name": "pdf",
+  "files_base": "repo_root",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Convert tmp/ds987-k26-som.pdf to Markdown. Preserve the document structure including headings, lists, and paragraphs. Output the Markdown file alongside an images/ folder for any extracted figures.",
+      "expected_output": "A Markdown file that mirrors the original PDF structure with correct heading hierarchy, readable paragraphs, and image references pointing to images/ directory. Any layout limitations are flagged with HTML comment warnings.",
+      "files": ["tmp/ds987-k26-som.pdf"],
+      "expectations": [
+        "Output contains a Markdown file with heading hierarchy using # syntax",
+        "Images are extracted to an images/ directory and referenced with ![alt](images/...) syntax",
+        "Any fidelity warnings (multi-column, merged cells, vector graphics) are inserted as HTML comments",
+        "No content from the PDF is silently dropped"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I need the tables from tmp/ds987-k26-som.pdf converted to proper Markdown tables with column alignment. Focus on getting the tabular data right — I'll use it in a downstream data pipeline.",
+      "expected_output": "Markdown output where every table in the PDF is rendered as a pipe-delimited Markdown table with a header row and separator row. Merged or nested cells are simplified with a warning comment. Post-conversion table verification is run.",
+      "files": ["tmp/ds987-k26-som.pdf"],
+      "expectations": [
+        "Tables are rendered using Markdown pipe syntax (| col1 | col2 |) with header separator rows",
+        "Merged or nested cells produce a <!-- WARNING: merged cells simplified --> comment",
+        "Post-conversion table verification is performed (verify_tables or equivalent check)",
+        "If initial conversion misses tables, a pdfplumber fallback extraction is attempted"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Extract all images and diagrams from tmp/ds987-k26-som.pdf into an images/ folder, and give me a Markdown file that references each image in the correct reading order. Warn me about any vector diagrams that can't be extracted as raster images.",
+      "expected_output": "An images/ directory containing extracted raster images as PNG files, and a Markdown file that references each image inline at the correct document position. Vector graphics that cannot be rasterized are flagged with HTML comment warnings.",
+      "files": ["tmp/ds987-k26-som.pdf"],
+      "expectations": [
+        "Raster images are saved to images/ directory as PNG files",
+        "Each extracted image is referenced in the Markdown with ![](images/...) at the correct position",
+        "Vector diagrams that cannot be extracted produce a <!-- WARNING: vector graphic on page N could not be extracted --> comment",
+        "The tool decision tree is followed — docling or lightweight script is chosen for image extraction"
+      ]
+    }
+  ]
+}
