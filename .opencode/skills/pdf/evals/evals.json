@@ -4,37 +4,52 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Convert tmp/ds987-k26-som.pdf to Markdown. Preserve the document structure including headings, lists, and paragraphs. Output the Markdown file alongside an images/ folder for any extracted figures.",
-      "expected_output": "A Markdown file that mirrors the original PDF structure with correct heading hierarchy, readable paragraphs, and image references pointing to images/ directory. Any layout limitations are flagged with HTML comment warnings.",
+      "prompt": "Convert tmp/ds987-k26-som.pdf to Markdown. Preserve the document structure — especially section headings, lists, and paragraphs. Output the Markdown file alongside an images/ folder for any extracted figures.",
+      "expected_output": "A Markdown file that mirrors the original PDF structure with correct heading hierarchy using # syntax, readable paragraphs, and image references pointing to images/ directory. Section headings are promoted from bold/large-font PDF text to proper Markdown heading syntax. Any layout limitations are flagged with HTML comment warnings.",
       "files": ["tmp/ds987-k26-som.pdf"],
       "expectations": [
-        "Output contains a Markdown file with heading hierarchy using # syntax",
+        "Real section headings in the PDF are promoted to Markdown heading syntax (#, ##, ###) — not left as bold text or unstyled lines",
+        "Heading hierarchy reflects the logical document outline (e.g., chapter > section > subsection)",
+        "Long prose lines (≈>80 chars or full sentences) are NOT promoted to headings even if bold/large in the PDF — they remain as body text or bold emphasis",
+        "Cross-reference sentences (e.g., 'See Section 4.2', 'Refer to Appendix B', 'for more details') are NOT promoted to headings — they stay as body text",
+        "Legal or disclaimer prose (e.g., 'provided as-is', 'without warranty', 'all rights reserved', 'subject to the terms') is NOT promoted to headings even when bold or large-font",
+        "Every # line in the output is a short, genuine structural heading — no false-positive headings on body paragraphs",
         "Images are extracted to an images/ directory and referenced with ![alt](images/...) syntax",
-        "Any fidelity warnings (multi-column, merged cells, vector graphics) are inserted as HTML comments",
+        "Any fidelity warnings (multi-column, merged/spanning cells, vector graphics) are inserted as HTML comments",
         "No content from the PDF is silently dropped"
       ]
     },
     {
       "id": 2,
-      "prompt": "I need the tables from tmp/ds987-k26-som.pdf converted to proper Markdown tables with column alignment. Focus on getting the tabular data right — I'll use it in a downstream data pipeline.",
-      "expected_output": "Markdown output where every table in the PDF is rendered as a pipe-delimited Markdown table with a header row and separator row. Merged or nested cells are simplified with a warning comment. Post-conversion table verification is run.",
+      "prompt": "I need the tables from tmp/ds987-k26-som.pdf converted to proper Markdown tables with column alignment. The PDF contains tables with merged and spanning cells. Focus on getting the tabular data right — I'll use it in a downstream data pipeline.",
+      "expected_output": "Markdown output where every table in the PDF is rendered as a pipe-delimited Markdown table with a header row and separator row. Merged or spanning cells are normalized so every row has equal column count, with a warning comment above the affected table. Post-conversion table verification is run.",
       "files": ["tmp/ds987-k26-som.pdf"],
       "expectations": [
         "Tables are rendered using Markdown pipe syntax (| col1 | col2 |) with header separator rows",
-        "Merged or nested cells produce a <!-- WARNING: merged cells simplified --> comment",
+        "Merged or spanning cells are normalized: spanned values are repeated or empty cells inserted so every row has equal column count",
+        "A <!-- WARNING: merged/spanning cells normalized; verify table accuracy --> comment appears above each affected table",
+        "Sparse spanning rows (sub-headers or note rows where most cells are empty) are preserved — not collapsed or silently dropped",
+        "Continuation content in spanning rows appears in the correct column with empty cells padding the rest",
         "Post-conversion table verification is performed (verify_tables or equivalent check)",
-        "If initial conversion misses tables, a pdfplumber fallback extraction is attempted"
+        "If initial conversion misses tables, a pdfplumber fallback extraction is attempted",
+        "Section headings above tables use Markdown heading syntax (#, ##), not bold or plain text",
+        "Long prose lines near tables are NOT falsely promoted to headings — heading promotion favours precision over recall",
+        "Cross-reference sentences near or inside tables (e.g., 'See Table 3 for …') are NOT promoted to headings",
+        "Legal/disclaimer text in any position (headers, footers, or body) is NOT promoted to headings"
       ]
     },
     {
       "id": 3,
       "prompt": "Extract all images and diagrams from tmp/ds987-k26-som.pdf into an images/ folder, and give me a Markdown file that references each image in the correct reading order. Warn me about any vector diagrams that can't be extracted as raster images.",
-      "expected_output": "An images/ directory containing extracted raster images as PNG files, and a Markdown file that references each image inline at the correct document position. Vector graphics that cannot be rasterized are flagged with HTML comment warnings.",
+      "expected_output": "An images/ directory containing extracted raster images as PNG files, and a Markdown file that references each image inline at the correct document position. Section headings use proper Markdown # syntax. Vector graphics that cannot be rasterized are flagged with HTML comment warnings.",
       "files": ["tmp/ds987-k26-som.pdf"],
       "expectations": [
         "Raster images are saved to images/ directory as PNG files",
         "Each extracted image is referenced in the Markdown with ![](images/...) at the correct position",
         "Vector diagrams that cannot be extracted produce a <!-- WARNING: vector graphic on page N could not be extracted --> comment",
+        "Section headings surrounding images use Markdown heading syntax (#, ##, ###), not bold or plain text",
+        "Long prose lines (captions, descriptions) are NOT promoted to headings — only short structural labels become # lines",
+        "Cross-reference sentences and legal/disclaimer prose are NOT promoted to headings regardless of font styling",
         "The tool decision tree is followed — docling or lightweight script is chosen for image extraction"
       ]
     }

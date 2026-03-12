@@ -12,7 +12,7 @@ Convert PDF documents into clean Markdown that preserves structure, tables, and 
 Markdown cannot represent every PDF layout. When you encounter any of the following, insert an HTML comment warning and tell the user:
 
 - **Multi-column layouts** — reading order may be wrong. Add `<!-- WARNING: multi-column layout detected; verify reading order -->`.
-- **Nested or merged table cells** — Markdown tables are flat grids. Add `<!-- WARNING: merged cells simplified; verify table accuracy -->`.
+- **Nested, merged, or spanning table cells** — Markdown tables are flat grids. Normalize merged/spanning cells by repeating the spanned value or inserting empty cells so every row has equal column count. Add `<!-- WARNING: merged/spanning cells normalized; verify table accuracy -->`.
 - **Overlapping text/image regions** — positional fidelity is lost. Add `<!-- WARNING: overlapping elements; layout approximated -->`.
 - **Vector diagrams / annotations** — not extractable as raster images. Add `<!-- WARNING: vector graphic on page N could not be extracted -->`.
 
@@ -149,6 +149,13 @@ output/
     ├── page1_img1.png
     └── page2_img1.png
 ```
+
+Quality targets (iterations 1–3):
+- **Heading promotion — precision over recall**: Detect PDF text styled as section headings (large/bold font, outline entries) and emit Markdown heading syntax (`#`, `##`, `###`). Never leave real headings as plain bold text or unstyled lines. **Iteration-2 rule**: Do **not** promote a line to a heading if it exceeds ~80 characters or reads as a full sentence/clause of body text. Long prose lines that happen to be bold or large are almost always emphasis within a paragraph, not structural headings. When in doubt, leave the line as bold (`**text**`) rather than risk a false-positive heading. **Iteration-3 additions**:
+  - **Cross-reference sentences**: Lines containing phrases like "See Section …", "Refer to Appendix …", "as described in …", "in accordance with …", or "for more details/information" must **never** be promoted to headings regardless of font size or boldness. These are navigational prose, not structural headings.
+  - **Legal / disclaimer prose**: Lines containing boilerplate legal language ("provided as-is", "without warranty", "all rights reserved", "disclaimer", "subject to the terms", "no liability", "governing law", "to the fullest extent", "warranty of merchantability") must **not** be promoted to headings. These blocks are often rendered in bold or larger font for emphasis but are body content.
+- **Merged/spanning table normalization**: When `pdfplumber` reports cells that span multiple rows or columns, normalize them so every Markdown row has equal column count. Repeat the spanned value into each covered cell, or insert empty cells, and add a `<!-- WARNING: merged/spanning cells normalized; verify table accuracy -->` comment above the table.
+- **Sparse spanning rows (iteration 2)**: Tables sometimes contain continuation rows where most cells are empty and a single cell spans the full width (e.g., a sub-header or note row). Preserve these rows in the Markdown table with the content in the correct column and empty cells for the rest — do not collapse or drop them. Mark such rows with an inline comment `<!-- spanning row -->` so downstream consumers can identify them.
 
 Key behaviors:
 - Text is segmented by vertical position; table regions are excluded to avoid duplication.
