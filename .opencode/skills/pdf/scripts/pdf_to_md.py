@@ -319,6 +319,128 @@ def classify_heading(
 
 
 # ---------------------------------------------------------------------------
+# Iteration 3: numbered section heading promotion
+# ---------------------------------------------------------------------------
+
+_NUMBERED_SECTION_RE = re.compile(
+    r"^(\d+)"                  # starts with digit(s)
+    r"(?:\.(\d+))?"            # optional .digit (sub-section)
+    r"(?:\.(\d+))?"            # optional .digit (sub-sub-section)
+    r"\.?\s+"                  # optional trailing dot, then whitespace
+    r"([A-Z])"                 # title must start with uppercase letter
+)
+
+
+def _promote_numbered_heading(text: str) -> int:
+    """Promote numbered section heading patterns to a heading level.
+
+    Recognises patterns common in academic papers and technical books:
+        ``1 INTRODUCTION``          → H2
+        ``1. Introduction``         → H2
+        ``2.1 Detection-based Methods`` → H3
+        ``3.2.1 Sub-method``        → H3
+
+    Returns heading level 2-3, or 0 if *text* is not a section heading.
+    """
+    stripped = text.strip()
+    m = _NUMBERED_SECTION_RE.match(stripped)
+    if not m:
+        return 0
+
+    # Length guards – section headings are short
+    if len(stripped) > 80 or len(stripped.split()) > 12:
+        return 0
+
+    # Must not end with sentence punctuation
+    if stripped[-1:] in (".", "?", "!"):
+        return 0
+
+    # Title text that follows the number
+    rest = stripped[m.start(4):]
+    alpha = [c for c in rest if c.isalpha()]
+    if len(alpha) < HEADING_MIN_ALPHA:
+        return 0
+
+    # Reject unreasonably large section numbers (e.g. year "2202" or page
+    # number artefacts).  Top-level sections rarely exceed two digits.
+    try:
+        top_num = int(m.group(1))
+        if top_num > 99:
+            return 0
+    except ValueError:
+        return 0
+        return 0
+
+    is_all_caps = len(alpha) > 2 and all(c.isupper() for c in alpha)
+
+    # For mixed-case text, require Title Case (majority of significant
+    # words start with an uppercase letter).
+    if not is_all_caps:
+        _MINOR = {
+            "a", "an", "the", "and", "or", "of", "in", "on", "to",
+            "for", "with", "at", "by", "from", "is", "its", "as",
+        }
+        words = rest.split()
+        significant = [
+            w for w in words if w.lower() not in _MINOR and len(w) > 1
+        ]
+        if significant:
+            caps = sum(1 for w in significant if w[:1].isupper())
+            if caps / len(significant) < 0.6:
+                return 0
+
+    # Heading depth from section number
+    if m.group(2) is not None:
+        return 3  # sub-section (1.1, 2.3.1, …)
+    return 2      # top-level section (1, 2, …)
+
+
+# ---------------------------------------------------------------------------
+# Iteration 3: code-like text detection
+# ---------------------------------------------------------------------------
+
+
+def _is_code_like_text(text: str) -> bool:
+    """Return True when *text* looks like source code or a code comment.
+
+    Used as a safety-net to suppress heading promotion for lines extracted
+    from code blocks in technical papers and programming books.  Requires at
+    least two independent code indicators to avoid false positives on
+    regular heading text.
+    """
+    stripped = text.strip()
+    # Strip leading '#' (code comment prefix) to inspect the core content
+    core = re.sub(r"^#+\s*", "", stripped)
+    if not core:
+        return False
+
+    indicators = 0
+    # snake_case identifiers (common in Python / C / ML code)
+    if re.search(r"\b[a-z]{2,}_[a-z]\w*", core):
+        indicators += 1
+    # Brackets typical of arrays / dicts / type annotations
+    if re.search(r"[\[\]{}]", core):
+        indicators += 1
+    # Assignment pattern: word = value
+    if re.search(r"\b\w+\s*=\s*\S", core):
+        indicators += 1
+    # Function / method call: word( or word.word(
+    if re.search(r"\b\w+\.\w+\s*\(", core) or re.search(r"\b\w+\([^)]*\)", core):
+        indicators += 1
+    # Python / common PL keywords
+    if re.search(
+        r"\b(?:def|class|import|return|raise|yield|self|None|True|False)\b",
+        core,
+    ):
+        indicators += 1
+    # ML framework namespaces
+    if re.search(r"\b(?:mtf|tf|np|torch|plt)\b", core):
+        indicators += 1
+
+    return indicators >= 2
+
+
+# ---------------------------------------------------------------------------
 # Scanned-PDF detection
 # ---------------------------------------------------------------------------
 
@@ -821,7 +943,10 @@ def _extract_column_blocks(
         stripped = text.strip()
         if heading_level > 0 and (
             stripped.startswith(("•", "-", "\u2013", "\u2014", "*"))
-            or re.match(r"^\d+\.\s", stripped)
+            or (
+                re.match(r"^\d+\.\s", stripped)
+                and _promote_numbered_heading(stripped) == 0
+            )
             or re.match(
                 r"^(Figure|Table|Source|Note)\s", stripped, re.IGNORECASE
             )
@@ -863,11 +988,41 @@ def _extract_column_blocks(
             # Iteration 4: text starting with a lowercase word is almost
             # certainly a sentence fragment, not a heading.
             or (stripped[:1].islower() and len(stripped.split()) > 1)
+            # Iteration 3: character-spaced display text (e.g. "' b a n a n a '")
+            # where most "words" are single alphabetic characters.
+            or (
+                len(stripped.split()) > 3
+                and sum(
+                    1 for w in stripped.split()
+                    if len(w) == 1 and w.isalpha()
+                )
+                > len(stripped.split()) * 0.5
+            )
         ):
+            heading_level = 0
+
+        # Iteration 3: numbered section heading promotion — text that was
+        # not detected by font-size heuristics but matches clear numbered-
+        # heading patterns (e.g. "1 INTRODUCTION", "2.1 Methods").
+        if heading_level == 0:
+            heading_level = _promote_numbered_heading(stripped)
+
+        # Iteration 3: code-like text suppression — prevents source-code
+        # lines / code comments from being promoted to headings.
+        if heading_level > 0 and _is_code_like_text(stripped):
             heading_level = 0
 
         if heading_level > 0:
             text = "#" * heading_level + " " + text
+        else:
+            # Escape leading '#' so code-comment lines are not rendered as
+            # Markdown headings (e.g. ``# shape: [batch, seq]``).
+            _lstripped = text.lstrip()
+            if re.match(r"^#{1,6}\s", _lstripped) or re.match(
+                r"^#{1,6}$", _lstripped
+            ):
+                leading_ws = text[: len(text) - len(_lstripped)]
+                text = leading_ws + "\\" + _lstripped
 
         paragraphs.append({"y_top": block_start_y, "content": text})
         current_words, current_sizes, current_fonts = [], [], []
