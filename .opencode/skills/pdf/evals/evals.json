@@ -1,56 +1,300 @@
 {
   "skill_name": "pdf",
+  "version": "2.0",
   "files_base": "repo_root",
+  "quality_dimensions": [
+    "layout_fidelity",
+    "heading_hierarchy",
+    "table_accuracy",
+    "image_extraction",
+    "spanning_cells",
+    "code_blocks",
+    "reading_order"
+  ],
   "evals": [
     {
-      "id": 1,
-      "prompt": "Convert tmp/ds987-k26-som.pdf to Markdown. Preserve the document structure — especially section headings, lists, and paragraphs. Output the Markdown file alongside an images/ folder for any extracted figures.",
+      "id": "crowd-layout-fidelity",
+      "pdf": "tests/pdfs/crowd.pdf",
+      "focus": ["layout_fidelity", "reading_order", "heading_hierarchy"],
+      "prompt": "Convert tests/pdfs/crowd.pdf to Markdown. This is an academic paper with two-column layout. Preserve section headings, abstract, figures, and any benchmark tables. Output the Markdown file alongside an images/ folder for extracted figures.",
+      "expected_output": "A Markdown file that reconstructs the two-column academic paper into single-column reading order. Section headings (Abstract, Introduction, Related Work, Method, Experiments, Conclusion) use # / ## syntax. Figures are referenced with ![](images/...) at their logical positions. Any multi-column fidelity issues are flagged with HTML comments.",
+      "files": ["tests/pdfs/crowd.pdf"],
+      "expectations": [
+        "Two-column layout is merged into single-column reading order — text does not interleave between columns",
+        "Standard academic sections (Abstract, Introduction, Related Work, etc.) are promoted to ## headings",
+        "Paper title appears as a # heading at the top",
+        "Author names and affiliations are preserved as body text, NOT promoted to headings",
+        "Figure captions remain as body text below the image reference, not promoted to headings",
+        "Any benchmark/results tables use Markdown pipe syntax with header rows",
+        "Images/figures are extracted to images/ directory and referenced with ![](images/...) syntax",
+        "Equations or mathematical notation are preserved as best as possible (LaTeX or plain text)",
+        "Multi-column layout warnings are inserted as <!-- WARNING: multi-column layout --> comments",
+        "No content from abstract, body, or references is silently dropped"
+      ]
+    },
+    {
+      "id": "crowd-figure-extraction",
+      "pdf": "tests/pdfs/crowd.pdf",
+      "focus": ["image_extraction"],
+      "prompt": "Extract all figures and diagrams from tests/pdfs/crowd.pdf into an images/ folder. Produce a Markdown file that references each figure at its correct position in the paper's reading order. This paper likely has crowd density maps, architecture diagrams, and result visualizations.",
+      "expected_output": "An images/ directory with extracted figures as PNG files, and a Markdown file referencing each figure inline. Figure numbering should match the paper's original Figure N labels. Vector graphics that cannot be rasterized get HTML comment warnings.",
+      "files": ["tests/pdfs/crowd.pdf"],
+      "expectations": [
+        "All raster figures are saved to images/ as PNG files",
+        "Each figure is referenced with ![Figure N](images/...) at its logical document position",
+        "Figure captions are preserved as text below the image reference",
+        "Architecture diagrams or flowcharts are extracted if raster; flagged with <!-- WARNING --> if vector-only",
+        "Result visualization plots (density maps, heatmaps) are captured",
+        "Figures are NOT duplicated — each appears once at its logical position",
+        "Image filenames are descriptive or follow page_img pattern"
+      ]
+    },
+    {
+      "id": "ds987-structure-preserve",
+      "pdf": "tests/pdfs/ds987-k26-som.pdf",
+      "focus": ["heading_hierarchy", "layout_fidelity"],
+      "prompt": "Convert tests/pdfs/ds987-k26-som.pdf to Markdown. Preserve the document structure — especially section headings, lists, and paragraphs. Output the Markdown file alongside an images/ folder for any extracted figures.",
       "expected_output": "A Markdown file that mirrors the original PDF structure with correct heading hierarchy using # syntax, readable paragraphs, and image references pointing to images/ directory. Section headings are promoted from bold/large-font PDF text to proper Markdown heading syntax. Any layout limitations are flagged with HTML comment warnings.",
-      "files": ["tmp/ds987-k26-som.pdf"],
+      "files": ["tests/pdfs/ds987-k26-som.pdf"],
       "expectations": [
         "Real section headings in the PDF are promoted to Markdown heading syntax (#, ##, ###) — not left as bold text or unstyled lines",
         "Heading hierarchy reflects the logical document outline (e.g., chapter > section > subsection)",
-        "Long prose lines (≈>80 chars or full sentences) are NOT promoted to headings even if bold/large in the PDF — they remain as body text or bold emphasis",
-        "Cross-reference sentences (e.g., 'See Section 4.2', 'Refer to Appendix B', 'for more details') are NOT promoted to headings — they stay as body text",
-        "Legal or disclaimer prose (e.g., 'provided as-is', 'without warranty', 'all rights reserved', 'subject to the terms') is NOT promoted to headings even when bold or large-font",
-        "Every # line in the output is a short, genuine structural heading — no false-positive headings on body paragraphs",
-        "Images are extracted to an images/ directory and referenced with ![alt](images/...) syntax",
-        "Any fidelity warnings (multi-column, merged/spanning cells, vector graphics) are inserted as HTML comments",
+        "Long prose lines (>80 chars or full sentences) are NOT promoted to headings even if bold/large in the PDF",
+        "Cross-reference sentences (e.g., 'See Section 4.2') are NOT promoted to headings",
+        "Legal or disclaimer prose is NOT promoted to headings even when bold or large-font",
+        "Every # line in the output is a short, genuine structural heading — no false positives",
+        "Images are extracted to images/ and referenced with ![alt](images/...) syntax",
+        "Multi-column fidelity warnings are inserted as HTML comments",
         "No content from the PDF is silently dropped"
       ]
     },
     {
-      "id": 2,
-      "prompt": "I need the tables from tmp/ds987-k26-som.pdf converted to proper Markdown tables with column alignment. The PDF contains tables with merged and spanning cells. Focus on getting the tabular data right — I'll use it in a downstream data pipeline.",
-      "expected_output": "Markdown output where every table in the PDF is rendered as a pipe-delimited Markdown table with a header row and separator row. Merged or spanning cells are normalized so every row has equal column count, with a warning comment above the affected table. Post-conversion table verification is run.",
-      "files": ["tmp/ds987-k26-som.pdf"],
+      "id": "ds987-table-extraction",
+      "pdf": "tests/pdfs/ds987-k26-som.pdf",
+      "focus": ["table_accuracy", "spanning_cells"],
+      "prompt": "I need the tables from tests/pdfs/ds987-k26-som.pdf converted to proper Markdown tables with column alignment. The PDF contains tables with merged and spanning cells. Focus on getting the tabular data right — I'll use it in a downstream data pipeline.",
+      "expected_output": "Markdown output where every table in the PDF is rendered as a pipe-delimited Markdown table with a header row and separator row. Merged or spanning cells are normalized so every row has equal column count, with a warning comment above the affected table.",
+      "files": ["tests/pdfs/ds987-k26-som.pdf"],
       "expectations": [
         "Tables are rendered using Markdown pipe syntax (| col1 | col2 |) with header separator rows",
-        "Merged or spanning cells are normalized: spanned values are repeated or empty cells inserted so every row has equal column count",
-        "A <!-- WARNING: merged/spanning cells normalized; verify table accuracy --> comment appears above each affected table",
-        "Sparse spanning rows (sub-headers or note rows where most cells are empty) are preserved — not collapsed or silently dropped",
-        "Continuation content in spanning rows appears in the correct column with empty cells padding the rest",
-        "Post-conversion table verification is performed (verify_tables or equivalent check)",
-        "If initial conversion misses tables, a pdfplumber fallback extraction is attempted",
-        "Section headings above tables use Markdown heading syntax (#, ##), not bold or plain text",
-        "Long prose lines near tables are NOT falsely promoted to headings — heading promotion favours precision over recall",
-        "Cross-reference sentences near or inside tables (e.g., 'See Table 3 for …') are NOT promoted to headings",
-        "Legal/disclaimer text in any position (headers, footers, or body) is NOT promoted to headings"
+        "Merged or spanning cells are normalized: spanned values repeated or empty cells inserted for equal column count",
+        "A <!-- WARNING: merged/spanning cells --> comment appears above each affected table",
+        "Sparse spanning rows (sub-headers or note rows) are preserved — not collapsed or dropped",
+        "Continuation content in spanning rows appears in the correct column",
+        "Post-conversion table verification is performed",
+        "If initial conversion misses tables, a pdfplumber fallback is attempted",
+        "Section headings above tables use # syntax, not bold or plain text",
+        "Approximately 49 tables should be extracted (known from baseline)"
       ]
     },
     {
-      "id": 3,
-      "prompt": "Extract all images and diagrams from tmp/ds987-k26-som.pdf into an images/ folder, and give me a Markdown file that references each image in the correct reading order. Warn me about any vector diagrams that can't be extracted as raster images.",
-      "expected_output": "An images/ directory containing extracted raster images as PNG files, and a Markdown file that references each image inline at the correct document position. Section headings use proper Markdown # syntax. Vector graphics that cannot be rasterized are flagged with HTML comment warnings.",
-      "files": ["tmp/ds987-k26-som.pdf"],
+      "id": "ds987-image-extraction",
+      "pdf": "tests/pdfs/ds987-k26-som.pdf",
+      "focus": ["image_extraction"],
+      "prompt": "Extract all images and diagrams from tests/pdfs/ds987-k26-som.pdf into an images/ folder, and give me a Markdown file that references each image in the correct reading order. Warn me about any vector diagrams that can't be extracted as raster images.",
+      "expected_output": "An images/ directory containing extracted raster images as PNG files, and a Markdown file that references each image inline at the correct document position. Vector graphics that cannot be rasterized are flagged with HTML comment warnings.",
+      "files": ["tests/pdfs/ds987-k26-som.pdf"],
       "expectations": [
-        "Raster images are saved to images/ directory as PNG files",
-        "Each extracted image is referenced in the Markdown with ![](images/...) at the correct position",
-        "Vector diagrams that cannot be extracted produce a <!-- WARNING: vector graphic on page N could not be extracted --> comment",
-        "Section headings surrounding images use Markdown heading syntax (#, ##, ###), not bold or plain text",
-        "Long prose lines (captions, descriptions) are NOT promoted to headings — only short structural labels become # lines",
-        "Cross-reference sentences and legal/disclaimer prose are NOT promoted to headings regardless of font styling",
-        "The tool decision tree is followed — docling or lightweight script is chosen for image extraction"
+        "Raster images are saved to images/ as PNG files",
+        "Each image is referenced with ![](images/...) at its correct position",
+        "Vector diagrams produce a <!-- WARNING: vector graphic on page N --> comment",
+        "Section headings surrounding images use # syntax",
+        "Approximately 11 images should be extracted (known from baseline)",
+        "Image filenames follow a consistent naming pattern"
+      ]
+    },
+    {
+      "id": "multicolcnn-cross-column",
+      "pdf": "tests/pdfs/multicolcnn.pdf",
+      "focus": ["layout_fidelity", "reading_order", "heading_hierarchy"],
+      "prompt": "Convert tests/pdfs/multicolcnn.pdf to Markdown. This is a multi-column academic paper about CNNs. The two-column layout is the primary challenge. Ensure the reading order is correct — text from the left column should come before text from the right column within each section. Preserve all section headings, equations, and figure references.",
+      "expected_output": "A Markdown file with correct single-column reading order reconstructed from the two-column PDF. Academic section headings use ## syntax. CNN architecture descriptions, training details, and experimental results are readable in sequence without column interleaving.",
+      "files": ["tests/pdfs/multicolcnn.pdf"],
+      "expectations": [
+        "Two-column text is merged into correct single-column reading order",
+        "No sentence fragments from column A appear mid-sentence in column B content",
+        "Paper title is a # heading; sections (Introduction, Method, Experiments, etc.) are ## headings",
+        "Subsections use ### headings where present in the original",
+        "Author/affiliation block is body text, not headings",
+        "Abstract is clearly delimited (## Abstract or bold label)",
+        "Mathematical notation and equations are preserved inline or as display blocks",
+        "Multi-column layout warnings appear as HTML comments where fidelity is uncertain",
+        "References section is preserved with correct numbering",
+        "No paragraph text is silently dropped during column merge"
+      ]
+    },
+    {
+      "id": "multicolcnn-result-tables",
+      "pdf": "tests/pdfs/multicolcnn.pdf",
+      "focus": ["table_accuracy", "spanning_cells"],
+      "prompt": "Extract the benchmark/result tables from tests/pdfs/multicolcnn.pdf into proper Markdown tables. Academic papers often have comparison tables with merged header cells (e.g., grouped metrics under a spanning header). Preserve the table structure and numerical data accurately.",
+      "expected_output": "Markdown tables with correct pipe syntax for all benchmark and comparison tables in the paper. Grouped/spanning headers are normalized to equal column counts. Numerical results (accuracy, error rates, etc.) are preserved exactly.",
+      "files": ["tests/pdfs/multicolcnn.pdf"],
+      "expectations": [
+        "All benchmark/comparison tables use Markdown pipe syntax with header separator",
+        "Grouped column headers (spanning cells) are normalized with equal column counts",
+        "Numerical values (accuracy percentages, error rates, counts) are exact — no rounding or truncation",
+        "Table captions (Table 1, Table 2, etc.) are preserved as text above the table",
+        "Method/model names in the leftmost column are preserved exactly",
+        "Bold or highlighted best results are preserved with **bold** syntax where possible",
+        "A <!-- WARNING --> comment appears for tables with complex spanning headers"
+      ]
+    },
+    {
+      "id": "switch-trans-full-convert",
+      "pdf": "tests/pdfs/switch_trans.pdf",
+      "focus": ["layout_fidelity", "heading_hierarchy", "table_accuracy"],
+      "prompt": "Convert tests/pdfs/switch_trans.pdf to Markdown. This is the Switch Transformer paper — a significant ML research paper with two-column layout, complex tables comparing model configurations, and architecture diagrams. Produce a complete Markdown conversion with images/ folder.",
+      "expected_output": "A complete Markdown conversion with correct heading hierarchy, properly formatted benchmark tables, extracted figures, and single-column reading order. The paper's structure (Abstract through Conclusion/References) is preserved.",
+      "files": ["tests/pdfs/switch_trans.pdf"],
+      "expectations": [
+        "Paper title as # heading, sections as ## headings, subsections as ###",
+        "Two-column layout merged into correct reading order",
+        "All benchmark tables (model comparisons, scaling results) use pipe syntax",
+        "Architecture diagrams extracted to images/ and referenced with ![](images/...)",
+        "Abstract is clearly marked and complete",
+        "Equation blocks (loss functions, routing formulas) are preserved",
+        "Table of model configurations with parameter counts is accurately captured",
+        "Author list and affiliations remain as body text",
+        "Appendix sections are included with proper heading levels",
+        "No experimental results or ablation data is dropped"
+      ]
+    },
+    {
+      "id": "switch-trans-spanning-tables",
+      "pdf": "tests/pdfs/switch_trans.pdf",
+      "focus": ["table_accuracy", "spanning_cells"],
+      "prompt": "Focus on extracting all tables from tests/pdfs/switch_trans.pdf with special attention to spanning/merged cells. The Switch Transformer paper has complex comparison tables where headers span multiple columns (e.g., grouping 'Pre-training' and 'Fine-tuning' metrics under parent headers). Each table must have equal column counts per row.",
+      "expected_output": "All tables from the paper rendered as Markdown pipe tables. Spanning headers are normalized. Model comparison tables preserve exact numerical values. Each table has a warning comment if spanning cells were detected and normalized.",
+      "files": ["tests/pdfs/switch_trans.pdf"],
+      "expectations": [
+        "Every table row has equal column count after normalization",
+        "Spanning header cells are handled: value repeated or sub-columns created",
+        "Numerical results (perplexity, accuracy, BLEU scores, speedup ratios) are exact",
+        "Table captions preserved above each table",
+        "Model names and configuration labels are exact (e.g., 'Switch-Base', 'Switch-Large')",
+        "Multi-row spanning cells in comparison tables are flattened correctly",
+        "<!-- WARNING: merged/spanning cells --> comment on affected tables",
+        "No table is silently dropped — all tables from the paper are present"
+      ]
+    },
+    {
+      "id": "thinkdsp-book-structure",
+      "pdf": "tests/pdfs/thinkdsp.pdf",
+      "focus": ["heading_hierarchy", "code_blocks", "image_extraction"],
+      "prompt": "Convert tests/pdfs/thinkdsp.pdf to Markdown. This is 'Think DSP' by Allen Downey — a programming textbook with chapters, code listings, and signal processing plots/figures. Preserve the chapter/section hierarchy, format code blocks properly, and extract figures to images/.",
+      "expected_output": "A Markdown file with book structure: # for chapter titles, ## for sections, ### for subsections. Python code listings are in fenced code blocks (```python). Signal processing plots and diagrams are in images/ with ![](images/...) references. Exercise sections are clearly delimited.",
+      "files": ["tests/pdfs/thinkdsp.pdf"],
+      "expectations": [
+        "Chapter titles use # heading syntax (e.g., '# Chapter 1: Sounds and Signals')",
+        "Section titles within chapters use ## syntax",
+        "Subsection titles use ### syntax",
+        "Python code listings are wrapped in ```python fenced code blocks",
+        "Code indentation is preserved within code blocks",
+        "Signal processing plots (waveforms, spectra, spectrograms) are extracted to images/",
+        "Each figure is referenced with ![](images/...) at its logical position in the text",
+        "Exercise/problem sections are clearly labeled",
+        "Inline code references (function names, variable names) use backtick syntax",
+        "Table of contents or index content is preserved if present",
+        "No chapter content is silently dropped — all chapters present"
+      ]
+    },
+    {
+      "id": "thinkos-code-listings",
+      "pdf": "tests/pdfs/thinkos.pdf",
+      "focus": ["code_blocks", "heading_hierarchy", "layout_fidelity"],
+      "prompt": "Convert tests/pdfs/thinkos.pdf to Markdown. This is 'Think OS' by Allen Downey — a book about operating systems with C code listings, system diagrams, and technical explanations. Preserve chapter structure, format C code blocks properly, and extract any diagrams to images/.",
+      "expected_output": "A Markdown file preserving the book's chapter/section hierarchy. C code listings are in fenced ```c code blocks with correct indentation. System architecture diagrams are in images/. Technical terms and function names use inline code backticks.",
+      "files": ["tests/pdfs/thinkos.pdf"],
+      "expectations": [
+        "Chapter titles use # heading syntax",
+        "Section and subsection titles use ## and ### syntax respectively",
+        "C code listings are wrapped in ```c fenced code blocks",
+        "Code indentation and formatting is preserved (especially pointer syntax, struct definitions)",
+        "System diagrams (memory layout, process diagrams, stack frames) are extracted to images/",
+        "Figures referenced with ![](images/...) at correct positions",
+        "Technical terms (malloc, fork, mutex, etc.) use `backtick` inline code syntax where appropriate",
+        "Exercises and glossary sections are preserved",
+        "Header/footer boilerplate (page numbers, chapter titles) is NOT included in body text",
+        "No chapter or section content is silently dropped"
+      ]
+    },
+    {
+      "id": "thinkpython-heading-hierarchy",
+      "pdf": "tests/pdfs/thinkpython.pdf",
+      "focus": ["heading_hierarchy"],
+      "prompt": "Convert tests/pdfs/thinkpython.pdf to Markdown with focus on getting the heading hierarchy exactly right. This is 'Think Python' by Allen Downey. The book has a well-defined structure: Part > Chapter > Section > Subsection. I need the Markdown heading levels to mirror this hierarchy precisely.",
+      "expected_output": "A Markdown file where every structural heading from the book maps to the correct # level. Parts (if present) at #, chapters at # or ##, sections at ## or ###, subsections one level deeper. No body text falsely promoted to headings. Exercise labels and glossary entries are not headings.",
+      "files": ["tests/pdfs/thinkpython.pdf"],
+      "expectations": [
+        "Chapter titles consistently use the same heading level throughout",
+        "Section titles within chapters are exactly one level below chapter titles",
+        "Subsection titles are exactly one level below section titles",
+        "Preface, appendix, and index sections use appropriate heading levels",
+        "Exercise labels ('Exercise 1.1') are formatted consistently — either as headings or bold labels, but uniform",
+        "Glossary term entries are NOT promoted to headings",
+        "Figure captions are NOT promoted to headings",
+        "Long paragraphs starting with bold text are NOT falsely promoted to headings",
+        "The table of contents structure matches the heading structure in the body",
+        "No heading level gaps (e.g., jumping from # to ### without ##)"
+      ]
+    },
+    {
+      "id": "thinkpython-full-convert",
+      "pdf": "tests/pdfs/thinkpython.pdf",
+      "focus": ["layout_fidelity", "code_blocks", "image_extraction"],
+      "prompt": "Convert tests/pdfs/thinkpython.pdf to Markdown. This is 'Think Python' by Allen Downey — a Python programming textbook. Produce a complete conversion preserving chapter structure, Python code listings in fenced blocks, turtle graphics and diagrams in images/, and exercise sections.",
+      "expected_output": "A complete Markdown book with proper heading hierarchy, Python code in ```python blocks, images in images/ directory, and all chapters from the original preserved in reading order.",
+      "files": ["tests/pdfs/thinkpython.pdf"],
+      "expectations": [
+        "All chapters present in correct order — no content dropped",
+        "Python code listings in ```python fenced code blocks",
+        "Code indentation preserved (Python indentation is semantically meaningful)",
+        "Turtle graphics diagrams and state diagrams extracted to images/",
+        "Figures referenced with ![](images/...) at correct positions",
+        "Inline code (variable names, function names, keywords) uses `backtick` syntax",
+        "Exercise sections preserved with problem statements",
+        "Tables (if any) use Markdown pipe syntax",
+        "String examples and output examples are clearly distinguished from code",
+        "Glossary definitions preserved at chapter ends"
+      ]
+    },
+    {
+      "id": "um10204-spec-tables",
+      "pdf": "tests/pdfs/UM10204.pdf",
+      "focus": ["table_accuracy", "spanning_cells", "heading_hierarchy"],
+      "prompt": "Convert tests/pdfs/UM10204.pdf to Markdown. This is a hardware specification document (likely NXP I2C spec) with complex protocol tables, timing parameter tables, and register maps. The tables have merged/spanning cells for grouping related parameters. Preserve all technical data precisely.",
+      "expected_output": "A Markdown file with the specification's section hierarchy preserved. All protocol tables, timing tables, and register maps use pipe syntax with correct data. Spanning cells in parameter groupings are normalized. Electrical specifications are numerically exact.",
+      "files": ["tests/pdfs/UM10204.pdf"],
+      "expectations": [
+        "Specification section headings use # / ## / ### hierarchy matching the document outline",
+        "Protocol state tables preserve all states and transitions",
+        "Timing parameter tables have correct min/typ/max values — no numerical corruption",
+        "Register map tables preserve bit field definitions with correct widths and addresses",
+        "Spanning header cells (grouping parameters by category) are normalized",
+        "Units (ns, µs, ms, MHz, kHz, mA, V) are preserved correctly — especially µ (micro) symbol",
+        "Footnotes and notes referenced in tables are preserved",
+        "Signal names (SDA, SCL, etc.) are exact",
+        "<!-- WARNING --> comments on tables with complex merged cells",
+        "No specification data is silently dropped"
+      ]
+    },
+    {
+      "id": "um10204-merged-cells",
+      "pdf": "tests/pdfs/UM10204.pdf",
+      "focus": ["spanning_cells", "table_accuracy"],
+      "prompt": "Focus specifically on the tables in tests/pdfs/UM10204.pdf that have merged or spanning cells. Hardware specification documents often group parameters under spanning category headers (e.g., 'AC Electrical Characteristics' spanning multiple sub-parameter rows). Extract these tables with every row having equal column count.",
+      "expected_output": "Markdown tables where every complex/merged table is normalized to equal column counts. Category headers that span full rows are handled as sub-heading rows or repeated cell values. Each affected table has a WARNING comment. Numerical specifications are exact.",
+      "files": ["tests/pdfs/UM10204.pdf"],
+      "expectations": [
+        "Every table row has equal column count — no ragged rows",
+        "Full-width spanning category headers are either: (a) extracted as ## sub-headings above the table, or (b) included as a full-span row with empty padding cells",
+        "Parameter grouping rows (e.g., 'Standard-mode', 'Fast-mode') are preserved, not collapsed",
+        "Min/typ/max columns aligned correctly — values in the right column",
+        "Condition columns (e.g., 'at VDD = 3.3V') are preserved",
+        "Footnote markers (*, †, 1, 2) in table cells are preserved",
+        "<!-- WARNING: merged/spanning cells --> appears above each normalized table",
+        "No numerical values are altered during normalization"
       ]
     }
   ]
