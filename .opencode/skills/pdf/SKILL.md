@@ -7,16 +7,38 @@ description: Use this skill whenever the user wants to convert a PDF to Markdown
 
 Convert PDF documents into clean Markdown that preserves structure, tables, and image references. Every other downstream use — RAG chunking, summarization, search indexing — starts from good Markdown.
 
-## Fidelity Warning
+## Acceptance Criteria (Quality Gates)
 
-Markdown cannot represent every PDF layout. When you encounter any of the following, insert an HTML comment warning and tell the user:
+Every conversion must be checked against these gates before delivery.
 
-- **Multi-column layouts** — reading order may be wrong. Add `<!-- WARNING: multi-column layout detected; verify reading order -->`.
-- **Nested, merged, or spanning table cells** — Markdown tables are flat grids. Normalize merged/spanning cells by repeating the spanned value or inserting empty cells so every row has equal column count. Add `<!-- WARNING: merged/spanning cells normalized; verify table accuracy -->`.
-- **Overlapping text/image regions** — positional fidelity is lost. Add `<!-- WARNING: overlapping elements; layout approximated -->`.
-- **Vector diagrams / annotations** — not extractable as raster images. Add `<!-- WARNING: vector graphic on page N could not be extracted -->`.
+### Headings
+- Real section headings in the PDF are promoted to `#` / `##` / `###` — never left as bold text or unstyled lines.
+- Heading hierarchy reflects the logical outline (chapter > section > subsection).
+- **Precision over recall**: lines >80 chars or full sentences are NOT promoted even if bold/large.
+- Cross-reference sentences ("See Section …", "Refer to Appendix …", "for more details") are **never** headings.
+- Legal / disclaimer prose ("provided as-is", "without warranty", "all rights reserved") is **never** a heading.
 
-Never silently drop content. If extraction is partial, warn explicitly.
+### Tables
+- Every table renders as `| col |` pipe syntax with header separator.
+- Merged / spanning cells are normalized to equal column count. A `<!-- WARNING: merged/spanning cells normalized; verify table accuracy -->` comment is emitted above affected tables.
+- Sparse spanning rows (sub-headers / note rows where most cells are empty) are preserved, not dropped. Each such row carries an inline `<!-- spanning row -->` marker.
+- If initial conversion misses tables, a pdfplumber fallback extraction is attempted.
+
+### Images
+- Raster images are extracted to `images/` and referenced with `![](images/…)`.
+- **Placement**: PyMuPDF (fitz) provides bounding-box data for images, so images are placed at their approximate vertical position within the page text. When bounding-box data is unavailable, images fall back to the end of the page.
+- Vector diagrams / annotations that cannot be rasterized produce a `<!-- WARNING: vector graphic on page N could not be extracted -->` comment.
+
+### Warnings — Never Drop Content Silently
+When fidelity is limited, insert an HTML comment **and** tell the user:
+
+| Condition | Warning comment |
+|---|---|
+| Multi-column layout | `<!-- NOTE: page N may have multi-column layout; reading order may need manual verification -->` |
+| Merged / spanning cells | `<!-- WARNING: merged/spanning cells normalized; verify table accuracy -->` |
+| Overlapping text / image | `<!-- WARNING: overlapping elements; layout approximated -->` |
+| Vector graphic not extractable | `<!-- WARNING: vector graphic on page N could not be extracted -->` |
+| Wide table (≥8 cols) | `<!-- NOTE: wide table (N cols); formatting may be approximate -->` |
 
 ---
 
@@ -32,7 +54,7 @@ PDF received
 │   ├─ YES ─┬─ Need tables or images?
 │   │       │   ├─ NO  → markitdown  (instant, zero models)
 │   │       │   └─ YES ─┬─ Want to avoid ML models?
-│   │       │           │   └─ YES → lightweight script (pdfplumber + pypdf)
+│   │       │           │   └─ YES → lightweight script (pdfplumber + PyMuPDF)
 │   │       │           └─ NO  → docling  (best tables, image export, MIT)
 │   │       │
 │   │       └─ Need structure + RAG integration?
@@ -43,7 +65,7 @@ PDF received
 │       ├─ Books / papers           → marker  (GPU preferred, ≥ 4 GB VRAM)
 │       └─ Scientific / formulas    → MinerU  (GPU preferred, ≥ 8 GB VRAM)
 │
-└─ Post-conversion → run verify_tables(); warn user on failure
+└─ Post-conversion → run verify() or verify_tables(); warn user on failure
 ```
 
 ### Comparison Matrix
@@ -133,12 +155,12 @@ for item, _ in result.document.iterate_items():
 
 ## 3 · Lightweight Script — No ML Models
 
-**When to use**: text-layer PDFs where you need tables and images but want to avoid installing ML model weights. Uses `pdfplumber` for text and tables, `pypdf` + `Pillow` for raster image extraction.
+**When to use**: text-layer PDFs where you need tables and images but want to avoid installing ML model weights. Uses `pdfplumber` for text and tables, `PyMuPDF` (fitz) + `Pillow` for raster image extraction.
 
 **Not suitable for**: scanned PDFs (no OCR). Detect and refuse early.
 
 ```bash
-uv pip install pdfplumber pypdf Pillow
+uv pip install pdfplumber PyMuPDF Pillow
 ```
 
 Output structure:
@@ -233,28 +255,19 @@ mineru -p document.pdf -o output_dir/ --backend pipeline  # CPU fallback
 
 ---
 
-## Post-Conversion: Table Verification
+## Post-Conversion: Verification
 
-Always verify that tables converted correctly. If `markdown_tables_found` is 0 but the PDF visibly contains tables, fall back to pdfplumber extraction.
+Always verify that conversion produced faithful output. The lightweight script exposes `verify()` (aliased as `verify_tables()` for backward compatibility):
 
 ```python
-import re
-from pathlib import Path
+from pdf_to_md import verify
 
-def verify_tables(md_path: str) -> dict:
-    text = Path(md_path).read_text(encoding="utf-8")
-    table_blocks = re.findall(
-        r'(\|.+\|\n\|[-| :]+\|\n(?:\|.+\|\n?)*)', text
-    )
-    suspicious = re.findall(r'(?m)^[ \t]+\S.*\n(?:[ \t]+\S.*\n){3,}', text)
-    return {
-        "markdown_tables_found": len(table_blocks),
-        "suspicious_plaintext_tables": len(suspicious),
-        "ok": len(table_blocks) > 0 or len(suspicious) == 0,
-    }
+stats = verify("output/document.md")
+# Returns: {"tables": N, "images": N, "warnings": N,
+#           "suspicious_plaintext_tables": N, "ok": bool}
 ```
 
-If verification fails, extract tables with pdfplumber and append them:
+If `tables` is 0 but the PDF visibly contains tables, fall back to pdfplumber extraction:
 
 ```python
 import pdfplumber
@@ -279,16 +292,43 @@ def pdfplumber_tables_to_md(pdf_path: str) -> str:
 
 ---
 
+## Iterative Testing Workflow
+
+The skill ships with a batch eval harness (`scripts/run_evals.py`) that converts every PDF listed in `evals/evals.json` and prints a summary table.
+
+```bash
+# Install lightweight-script dependencies
+pip install -r scripts/requirements.txt
+
+# Run all evals (from .opencode/skills/pdf/)
+python scripts/run_evals.py
+
+# Explicit repo root (if not auto-detected)
+python scripts/run_evals.py --repo-root /path/to/eval-skills
+
+# Custom output directory
+python scripts/run_evals.py -o tmp/eval_output
+```
+
+**Iteration loop** (repeat until all gates pass):
+1. Run `python scripts/run_evals.py` — review summary table.
+2. For each failing PDF, open the generated `.md` and check against the acceptance criteria above.
+3. Adjust `scripts/pdf_to_md.py` thresholds or logic.
+4. Re-run. Commit when the summary shows all green.
+
+---
+
 ## Quick Reference
 
 | Task | Command / Call |
 |------|---------------|
 | Text-only, fast | `markitdown doc.pdf -o doc.md` |
 | General / tables / images | `docling doc.pdf --image-export-mode referenced` |
-| Text-layer, no ML models | lightweight script (pdfplumber + pypdf) |
+| Text-layer, no ML models | lightweight script (pdfplumber + PyMuPDF) |
 | High-accuracy books/papers | `marker_single doc.pdf out/` |
 | Scientific / formulas | `mineru -p doc.pdf -o out/` |
 | Scanned, no GPU | `docling doc.pdf` (tesseract backend) |
 | Batch convert | `docling ./folder/ --to md --image-export-mode referenced` |
-| Verify tables | `verify_tables("output/doc.md")` |
+| Verify output | `verify("output/doc.md")` or `verify_tables("output/doc.md")` |
 | Fallback table extraction | `pdfplumber_tables_to_md("doc.pdf")` |
+| Batch eval harness | `python scripts/run_evals.py` |

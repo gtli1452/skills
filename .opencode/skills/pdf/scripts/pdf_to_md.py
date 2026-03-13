@@ -1,7 +1,7 @@
 """
 pdf_to_md.py -- Lightweight PDF to Markdown converter.
 
-Dependencies: pdfplumber, pypdf, Pillow  (optional: markitdown)
+Dependencies: pdfplumber, PyMuPDF (fitz), Pillow  (optional: markitdown)
 
 Suitable for text-layer PDFs (not scanned).
 Scanned PDFs are detected and rejected with a clear error suggesting
@@ -22,9 +22,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import fitz  # PyMuPDF
 import pdfplumber
 from PIL import Image
-from pypdf import PdfReader
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -290,26 +290,83 @@ def is_scanned(pdf_path: str) -> bool:
 
 
 def extract_page_images(
-    reader: PdfReader, page_idx: int, img_dir: Path
-) -> list[str]:
-    """Extract raster images from *page_idx* and save as PNG into *img_dir*.
+    fitz_page: fitz.Page, page_idx: int, img_dir: Path
+) -> list[dict[str, Any]]:
+    """Extract raster images from *fitz_page* and save as PNG into *img_dir*.
 
-    Returns a list of Markdown image references or HTML warning comments for
-    images that could not be decoded.
+    Uses PyMuPDF (fitz) which provides bounding-box data, enabling images to
+    be placed at their approximate vertical position rather than appended at
+    the end of the page.
+
+    Returns a list of dicts with keys ``y_top`` (float) and ``ref`` (str).
+    ``ref`` is either a Markdown image reference or an HTML warning comment.
     """
-    refs: list[str] = []
-    for j, img_file in enumerate(reader.pages[page_idx].images):
+    results: list[dict[str, Any]] = []
+    image_list = fitz_page.get_images(full=True)
+    doc = fitz_page.parent
+
+    for j, img_info in enumerate(image_list):
+        xref = img_info[0]
         img_name = f"page{page_idx + 1}_img{j + 1}.png"
+
+        # Determine vertical position via bounding-box lookup
+        y_top: float = float("inf")
         try:
-            pil = Image.open(io.BytesIO(img_file.data))
+            rects = fitz_page.get_image_rects(xref)
+            if rects:
+                y_top = min(r.y0 for r in rects)
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            img_data = doc.extract_image(xref)
+            if not img_data or not img_data.get("image"):
+                raise ValueError("empty image data")
+            pil = Image.open(io.BytesIO(img_data["image"]))
+            # Convert CMYK / palette to RGB for PNG compatibility
+            if pil.mode not in ("RGB", "RGBA", "L"):
+                pil = pil.convert("RGBA")
             pil.save(img_dir / img_name, "PNG")
-            refs.append(f"![](images/{img_name})")
+            results.append({"y_top": y_top, "ref": f"![](images/{img_name})"})
         except Exception as exc:  # noqa: BLE001
-            refs.append(
-                f"<!-- WARNING: image '{img_file.name}' on page "
-                f"{page_idx + 1} skipped ({exc}) -->"
+            results.append({
+                "y_top": y_top,
+                "ref": (
+                    f"<!-- WARNING: image (xref {xref}) on page "
+                    f"{page_idx + 1} skipped ({exc}) -->"
+                ),
+            })
+    return results
+
+
+def detect_vector_graphics(plumber_page: Any, page_idx: int) -> list[str]:
+    """Detect vector drawing operations that cannot be extracted as raster images.
+
+    pdfplumber exposes drawing objects (lines, rects, curves).  When a page has
+    significant vector art but no corresponding raster image, we emit a warning
+    so the user knows content may be missing from the Markdown output.
+
+    Returns a list of HTML warning comments (may be empty).
+    """
+    warnings: list[str] = []
+    try:
+        lines = plumber_page.lines or []
+        rects = plumber_page.rects or []
+        curves = plumber_page.curves or []
+        drawing_count = len(lines) + len(rects) + len(curves)
+
+        # Heuristic: a handful of lines/rects are normal table borders or
+        # decorative rules.  A substantial number (> 15) without raster images
+        # likely indicates a vector diagram, chart, or annotation.
+        if drawing_count > 15:
+            warnings.append(
+                f"<!-- WARNING: vector graphic on page {page_idx + 1} "
+                f"could not be extracted ({drawing_count} drawing objects "
+                f"detected) -->"
             )
-    return refs
+    except Exception:  # noqa: BLE001
+        pass
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -363,16 +420,36 @@ def _detect_title_row(
     return None, rows
 
 
-def _normalize_span_cells(rows: list[list[str]], ncols: int) -> list[list[str]]:
-    """Pad / truncate every row to exactly *ncols* columns."""
+def _normalize_span_cells(
+    rows: list[list[str]], ncols: int,
+) -> tuple[list[list[str]], bool]:
+    """Pad / truncate every row to exactly *ncols* columns.
+
+    Returns ``(rows, had_uneven)`` — *had_uneven* is True if any row needed
+    padding or truncation, which signals that merged/spanning cells were
+    present in the original table.
+    """
     result: list[list[str]] = []
+    had_uneven = False
     for row in rows:
+        if len(row) != ncols:
+            had_uneven = True
         if len(row) < ncols:
             row = list(row) + [""] * (ncols - len(row))
         elif len(row) > ncols:
             row = row[:ncols]
         result.append(row)
-    return result
+    return result, had_uneven
+
+
+def _is_spanning_row(row: list[str]) -> bool:
+    """Return True if a row looks like a spanning / sub-header row.
+
+    A spanning row has at most one non-empty cell while the rest are empty —
+    typically a sub-header or note that spans the full width of the table.
+    """
+    non_empty = [c for c in row if c.strip()]
+    return len(non_empty) <= 1 and len(row) >= 2
 
 
 def _forward_fill_groups(
@@ -446,16 +523,26 @@ def extract_page_tables(page: Any) -> list[dict[str, Any]]:
         ncols = max(len(row) for row in clean)
         if ncols < MIN_TABLE_COLS:
             continue
-        clean = _normalize_span_cells(clean, ncols)
+        clean, had_uneven = _normalize_span_cells(clean, ncols)
         clean, did_fill = _forward_fill_groups(clean, ncols)
 
         header = "| " + " | ".join(clean[0]) + " |"
         separator = "| " + " | ".join(["---"] * ncols) + " |"
-        body_rows = ["| " + " | ".join(row) + " |" for row in clean[1:]]
+        body_rows: list[str] = []
+        for row in clean[1:]:
+            row_md = "| " + " | ".join(row) + " |"
+            if _is_spanning_row(row):
+                row_md += "  <!-- spanning row -->"
+            body_rows.append(row_md)
 
         parts: list[str] = []
         if title:
             parts.append(f"**{title}**\n")
+        if had_uneven:
+            parts.append(
+                "<!-- WARNING: merged/spanning cells normalized; "
+                "verify table accuracy -->"
+            )
         if ncols >= WIDE_TABLE_COLS:
             parts.append(
                 f"<!-- NOTE: wide table ({ncols} cols); "
@@ -665,25 +752,48 @@ def is_multicolumn(page: Any) -> bool:
 
 
 def process_page(
-    reader: PdfReader, plumber_page: Any, page_idx: int, img_dir: Path,
+    fitz_page: fitz.Page, plumber_page: Any, page_idx: int, img_dir: Path,
     font_stats: dict[str, Any],
 ) -> str:
     """Build Markdown for a single page, interleaving text and tables by y."""
     tables = extract_page_tables(plumber_page)
     tbl_bboxes = [t["bbox"] for t in tables]
     texts = extract_page_text_blocks(plumber_page, tbl_bboxes, font_stats)
-    images = extract_page_images(reader, page_idx, img_dir)
+    image_results = extract_page_images(fitz_page, page_idx, img_dir)
 
-    # Merge text paragraphs and tables, sort by vertical position
+    # Detect vector graphics that cannot be extracted as raster images
+    raster_count = sum(1 for img in image_results if img["ref"].startswith("!["))
+    vector_warnings = detect_vector_graphics(plumber_page, page_idx)
+    # Only emit vector warnings when no raster images were extracted for this
+    # page — if raster images exist, the drawings are likely table borders or
+    # figure annotations rather than standalone vector art.
+    if raster_count > 0:
+        vector_warnings = []
+
+    # Merge text paragraphs, tables, and images — sort by vertical position
     all_blocks: list[tuple[float, str]] = [
         (t["y_top"], t["content"]) for t in texts
     ]
     all_blocks += [(t["y_top"], t["content"]) for t in tables]
+
+    # Images with a known bounding box are placed at their y-position;
+    # images without bbox data (y_top == inf) are appended at the end.
+    positioned_images: list[tuple[float, str]] = []
+    trailing_images: list[str] = []
+    for img in image_results:
+        if img["y_top"] < float("inf"):
+            positioned_images.append((img["y_top"], img["ref"]))
+        else:
+            trailing_images.append(img["ref"])
+
+    all_blocks += positioned_images
     all_blocks.sort(key=lambda x: x[0])
 
     ordered = [block[1] for block in all_blocks if block[1].strip()]
-    # Images appended at page end (pypdf has no reliable bbox for images)
-    ordered += images
+    # Images without position data are appended at page end
+    ordered += trailing_images
+    # Vector graphic warnings appended after images
+    ordered += vector_warnings
 
     if is_multicolumn(plumber_page):
         ordered.insert(
@@ -721,12 +831,13 @@ def pdf_to_markdown(pdf_path: str, out_dir: str) -> Path:
         shutil.rmtree(img_dir)
     img_dir.mkdir(parents=True)
 
-    reader = PdfReader(pdf_path)
+    fitz_doc = fitz.open(pdf_path)
     pages_md: list[str] = []
     with pdfplumber.open(pdf_path) as pdf:
         font_stats = collect_font_stats(pdf)
         for i, page in enumerate(pdf.pages):
-            pages_md.append(process_page(reader, page, i, img_dir, font_stats))
+            pages_md.append(process_page(fitz_doc[i], page, i, img_dir, font_stats))
+    fitz_doc.close()
 
     md_text = "\n\n---\n\n".join(pages_md)
     out_md = out / (Path(pdf_path).stem + ".md")
@@ -757,7 +868,21 @@ def verify(md_path: str) -> dict[str, int]:
     warn_pattern = re.compile(r"<!--\s*(?:WARNING|NOTE):")
     warns = warn_pattern.findall(text)
 
-    return {"tables": len(tables), "images": len(images), "warnings": len(warns)}
+    # Detect suspicious plain-text tables (indented columnar data)
+    suspicious = re.findall(r'(?m)^[ \t]+\S.*\n(?:[ \t]+\S.*\n){3,}', text)
+
+    return {
+        "tables": len(tables),
+        "images": len(images),
+        "warnings": len(warns),
+        "suspicious_plaintext_tables": len(suspicious),
+        "ok": len(tables) > 0 or len(suspicious) == 0,
+    }
+
+
+# Backward-compatible alias — SKILL.md and older callers may reference
+# ``verify_tables()`` instead of ``verify()``.
+verify_tables = verify
 
 
 # ---------------------------------------------------------------------------
