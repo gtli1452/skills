@@ -55,9 +55,20 @@ WIDE_TABLE_COLS: int = 8
 MIN_TABLE_TEXT_DENSITY: float = 0.3
 MIN_TABLE_AVG_CELL_LEN: float = 1.5
 
+# Minimum alpha characters required for a heading (suppresses single-letter
+# fragments from formulas / multi-column merges).
+HEADING_MIN_ALPHA: int = 3
+
 # Header/footer detection
 HEADER_FOOTER_MIN_PAGES: int = 3
-HEADER_FOOTER_ZONE_PT: float = 60.0
+HEADER_FOOTER_ZONE_PT: float = 72.0
+
+# Multi-column detection: horizontal gap (pt) between columns to split on
+COLUMN_GAP_PT: float = 30.0
+
+# Vector-graphic warning throttle: emit per-page detail only below this
+# threshold; above it, emit a single summary.
+VECTOR_WARN_PAGE_LIMIT: int = 5
 
 # ---------------------------------------------------------------------------
 # Font statistics collection (first pass over all pages)
@@ -86,6 +97,12 @@ def collect_font_stats(pdf: pdfplumber.PDF) -> dict[str, Any]:
     bottom_texts: Counter[str] = Counter()
     num_pages = len(pdf.pages)
 
+    # Line-level header/footer patterns: collect full lines (joined words)
+    # in header/footer zones so multi-word patterns like "NXP Semiconductors"
+    # are matched as a unit, not just individual words.
+    top_line_texts: Counter[str] = Counter()
+    bottom_line_texts: Counter[str] = Counter()
+
     for page in pdf.pages:
         words = page.extract_words(
             x_tolerance=2, y_tolerance=2,
@@ -106,14 +123,32 @@ def collect_font_stats(pdf: pdfplumber.PDF) -> dict[str, Any]:
                 chars = max(len(w.get("text", "")), 1)
                 all_size_counter[round(sz, 1)] += chars
                 all_font_counter[fn] += chars
-            text = w.get("text", "").strip()
-            if not text:
+
+        # Collect line-level header/footer patterns: build full lines from
+        # words in header/footer zones, sorted by x-position.
+        for _y_key, line_words in page_lines.items():
+            if not line_words:
                 continue
-            top_val = w.get("top", 0)
+            top_val = min(w.get("top", 0) for w in line_words)
+            sorted_words = sorted(line_words, key=lambda w: w["x0"])
+            line_text = " ".join(
+                w.get("text", "").strip() for w in sorted_words
+            ).strip().lower()
+            if not line_text:
+                continue
             if top_val < HEADER_FOOTER_ZONE_PT:
-                top_texts[text.lower()] += 1
+                top_line_texts[line_text] += 1
+                # Also collect individual words for backward compat
+                for w in sorted_words:
+                    t = w.get("text", "").strip()
+                    if t:
+                        top_texts[t.lower()] += 1
             elif top_val > page_height - HEADER_FOOTER_ZONE_PT:
-                bottom_texts[text.lower()] += 1
+                bottom_line_texts[line_text] += 1
+                for w in sorted_words:
+                    t = w.get("text", "").strip()
+                    if t:
+                        bottom_texts[t.lower()] += 1
 
         # Prose-line identification: lines with enough words to likely be
         # real paragraph text rather than table cells or captions.
@@ -142,18 +177,30 @@ def collect_font_stats(pdf: pdfplumber.PDF) -> dict[str, Any]:
         )
 
     threshold = min(HEADER_FOOTER_MIN_PAGES, max(2, num_pages // 2))
-    hf_texts: set[str] = set()
+
+    # Word-level hf texts (backward compat)
+    hf_words: set[str] = set()
     for txt, count in top_texts.items():
         if count >= threshold:
-            hf_texts.add(txt)
+            hf_words.add(txt)
     for txt, count in bottom_texts.items():
         if count >= threshold:
-            hf_texts.add(txt)
+            hf_words.add(txt)
+
+    # Line-level hf texts (full lines that recur across many pages)
+    hf_lines: set[str] = set()
+    for txt, count in top_line_texts.items():
+        if count >= threshold:
+            hf_lines.add(txt)
+    for txt, count in bottom_line_texts.items():
+        if count >= threshold:
+            hf_lines.add(txt)
 
     return {
         "body_size": body_size,
         "body_fontname": body_fontname,
-        "header_footer_texts": hf_texts,
+        "header_footer_texts": hf_words,
+        "header_footer_lines": hf_lines,
     }
 
 
@@ -211,11 +258,23 @@ def classify_heading(
 
     stripped = text.strip()
 
+    # Minimum alpha-character gate: single letters / short fragments from
+    # formulas or multi-column merges are never headings.
+    alpha_chars = [c for c in stripped if c.isalpha()]
+    if len(alpha_chars) < HEADING_MIN_ALPHA:
+        return 0
+
     # Hard length gate – nothing this long is a heading
     if (
         len(stripped) > HEADING_MAX_CHARS
         or len(stripped.split()) > HEADING_MAX_WORDS
     ):
+        return 0
+
+    # Sentence fragment guard: short text ending with a period that is not
+    # an abbreviation / numbered section label is typically a sentence tail
+    # pulled from body text, not a heading.
+    if stripped.endswith(".") and not re.match(r"^\d+(\.\d+)*\.?$", stripped):
         return 0
 
     # Iteration 3: long all-caps prose is legal/disclaimer boilerplate, not a
@@ -538,20 +597,15 @@ def extract_page_tables(page: Any) -> list[dict[str, Any]]:
         parts: list[str] = []
         if title:
             parts.append(f"**{title}**\n")
-        if had_uneven:
+        if had_uneven or did_fill:
             parts.append(
-                "<!-- WARNING: merged/spanning cells normalized; "
+                "<!-- WARNING: merged/spanning cells detected and normalized; "
                 "verify table accuracy -->"
             )
         if ncols >= WIDE_TABLE_COLS:
             parts.append(
                 f"<!-- NOTE: wide table ({ncols} cols); "
                 "formatting may be approximate -->"
-            )
-        if did_fill:
-            parts.append(
-                "<!-- NOTE: sparse group columns were forward-filled "
-                "for readability -->"
             )
         parts.append("\n".join([header, separator] + body_rows))
 
@@ -570,6 +624,61 @@ def extract_page_tables(page: Any) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _find_column_boundary(
+    words: list[dict[str, Any]], page_width: float,
+) -> float | None:
+    """Return the x-coordinate of a column gutter, or None if single-column.
+
+    Looks for a continuous vertical gap (no words crossing it) near the
+    midline of the page.  Returns the midpoint of the widest gap in the
+    central third of the page.
+    """
+    if len(words) < 20:
+        return None
+
+    mid = page_width / 2
+    search_lo = page_width * 0.3
+    search_hi = page_width * 0.7
+
+    # Collect all x-intervals for words in the central zone
+    intervals: list[tuple[float, float]] = []
+    for w in words:
+        x0, x1 = w["x0"], w["x1"]
+        if x1 > search_lo and x0 < search_hi:
+            intervals.append((x0, x1))
+
+    if not intervals:
+        return mid  # no words in the center → clear two-column split
+
+    intervals.sort()
+
+    # Find the widest gap between consecutive intervals in the search zone
+    right_edges: list[float] = []
+    for x0, x1 in intervals:
+        if right_edges and x0 > right_edges[-1] + 1:
+            pass  # gap detected
+        right_edges.append(x1)
+
+    # Walk sorted intervals and detect gaps
+    best_gap = 0.0
+    best_mid = mid
+    merged: list[tuple[float, float]] = []
+    for x0, x1 in intervals:
+        if merged and x0 > merged[-1][1] + 1:
+            gap = x0 - merged[-1][1]
+            if gap > best_gap:
+                best_gap = gap
+                best_mid = (merged[-1][1] + x0) / 2
+        if not merged or x0 > merged[-1][1]:
+            merged.append((x0, x1))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], x1))
+
+    if best_gap >= COLUMN_GAP_PT:
+        return best_mid
+    return None
+
+
 def extract_page_text_blocks(
     page: Any,
     table_bboxes: list[tuple[float, ...]],
@@ -578,18 +687,21 @@ def extract_page_text_blocks(
     """Extract text blocks with heading detection, skipping table regions.
 
     Uses font size / name from each word to classify headings.
-    Filters repeated header / footer text.
+    Filters repeated header / footer text.  Multi-column pages are split
+    at the column gutter so left- and right-column text is processed
+    independently, preventing cross-column garbling.
     """
     body_size: float = font_stats["body_size"]
     hf_texts: set[str] = font_stats["header_footer_texts"]
+    hf_lines: set[str] = font_stats.get("header_footer_lines", set())
 
     words = page.extract_words(
         x_tolerance=2, y_tolerance=2,
         extra_attrs=["fontname", "size"],
     )
 
-    # Group words into lines keyed by rounded y, tracking font info
-    lines: dict[float, dict[str, Any]] = {}
+    # Filter words inside table bounding boxes
+    filtered: list[dict[str, Any]] = []
     for w in words:
         if any(
             w["x0"] >= b[0]
@@ -599,15 +711,56 @@ def extract_page_text_blocks(
             for b in table_bboxes
         ):
             continue
+        filtered.append(w)
+
+    # Multi-column detection: split words into column groups so that
+    # headings and text from one column are not garbled with the other.
+    col_boundary = _find_column_boundary(filtered, page.width)
+    if col_boundary is not None:
+        left_words = [w for w in filtered if w["x1"] <= col_boundary + 5]
+        right_words = [w for w in filtered if w["x0"] >= col_boundary - 5]
+        # Only treat as two-column if both sides have meaningful content
+        if len(left_words) >= 5 and len(right_words) >= 5:
+            left_blocks = _extract_column_blocks(
+                left_words, body_size, hf_texts, hf_lines
+            )
+            right_blocks = _extract_column_blocks(
+                right_words, body_size, hf_texts, hf_lines
+            )
+            return left_blocks + right_blocks
+
+    # Single-column fallback
+    return _extract_column_blocks(filtered, body_size, hf_texts, hf_lines)
+
+
+def _extract_column_blocks(
+    words: list[dict[str, Any]],
+    body_size: float,
+    hf_texts: set[str],
+    hf_lines: set[str],
+) -> list[dict[str, Any]]:
+    """Build paragraph blocks from a single column of words.
+
+    Shared logic used by both single- and multi-column extraction paths.
+    """
+    # Group words into lines keyed by rounded y, tracking font info
+    lines: dict[float, dict[str, Any]] = {}
+    for w in words:
         key = round(w["top"], 0)
         if key not in lines:
             lines[key] = {"words": [], "sizes": [], "fontnames": []}
-        lines[key]["words"].append(w["text"])
+        # Preserve x-order within each line to avoid garbled output
+        lines[key]["words"].append((w["x0"], w["text"]))
         sz = w.get("size", 0)
         fn = w.get("fontname", "")
         chars = max(len(w.get("text", "")), 1)
         lines[key]["sizes"].extend([sz] * chars)
         lines[key]["fontnames"].extend([fn] * chars)
+
+    # Sort words within each line by x-position
+    for _k, line in lines.items():
+        line["words"].sort(key=lambda t: t[0])
+        line["words"] = [t[1] for t in line["words"]]
 
     sorted_ys = sorted(lines)
     paragraphs: list[dict[str, Any]] = []
@@ -636,8 +789,22 @@ def extract_page_text_blocks(
 
         text = " ".join(current_words)
 
-        # Filter header/footer text
+        # Filter header/footer text — word-level match
         if text.lower().strip() in hf_texts:
+            current_words, current_sizes, current_fonts = [], [], []
+            return
+
+        # Filter header/footer text — line-level match (catches multi-word
+        # repeated headers like "NXP Semiconductors", "UM10204").
+        if text.lower().strip() in hf_lines:
+            current_words, current_sizes, current_fonts = [], [], []
+            return
+
+        # Filter when every word individually is a known hf word (catches
+        # recombined header/footer fragments).
+        if hf_texts and all(
+            w.lower() in hf_texts for w in current_words if w.strip()
+        ):
             current_words, current_sizes, current_fonts = [], [], []
             return
 
@@ -693,6 +860,9 @@ def extract_page_text_blocks(
             # Iteration 3: lines ending with continuation punctuation are
             # mid-sentence fragments, not headings.
             or stripped[-1:] in (",", ";", ":")
+            # Iteration 4: text starting with a lowercase word is almost
+            # certainly a sentence fragment, not a heading.
+            or (stripped[:1].islower() and len(stripped.split()) > 1)
         ):
             heading_level = 0
 
@@ -754,8 +924,13 @@ def is_multicolumn(page: Any) -> bool:
 def process_page(
     fitz_page: fitz.Page, plumber_page: Any, page_idx: int, img_dir: Path,
     font_stats: dict[str, Any],
-) -> str:
-    """Build Markdown for a single page, interleaving text and tables by y."""
+) -> dict[str, Any]:
+    """Build Markdown for a single page, interleaving text and tables by y.
+
+    Returns a dict with ``md`` (str) and ``meta`` carrying per-page metadata
+    (e.g. multicolumn flag, vector drawing count) so that the caller can
+    consolidate repetitive warnings across pages.
+    """
     tables = extract_page_tables(plumber_page)
     tbl_bboxes = [t["bbox"] for t in tables]
     texts = extract_page_text_blocks(plumber_page, tbl_bboxes, font_stats)
@@ -764,9 +939,6 @@ def process_page(
     # Detect vector graphics that cannot be extracted as raster images
     raster_count = sum(1 for img in image_results if img["ref"].startswith("!["))
     vector_warnings = detect_vector_graphics(plumber_page, page_idx)
-    # Only emit vector warnings when no raster images were extracted for this
-    # page — if raster images exist, the drawings are likely table borders or
-    # figure annotations rather than standalone vector art.
     if raster_count > 0:
         vector_warnings = []
 
@@ -776,8 +948,6 @@ def process_page(
     ]
     all_blocks += [(t["y_top"], t["content"]) for t in tables]
 
-    # Images with a known bounding box are placed at their y-position;
-    # images without bbox data (y_top == inf) are appended at the end.
     positioned_images: list[tuple[float, str]] = []
     trailing_images: list[str] = []
     for img in image_results:
@@ -790,19 +960,31 @@ def process_page(
     all_blocks.sort(key=lambda x: x[0])
 
     ordered = [block[1] for block in all_blocks if block[1].strip()]
-    # Images without position data are appended at page end
     ordered += trailing_images
-    # Vector graphic warnings appended after images
-    ordered += vector_warnings
 
-    if is_multicolumn(plumber_page):
-        ordered.insert(
-            0,
-            f"<!-- NOTE: page {page_idx + 1} may have multi-column "
-            "layout; reading order may need manual verification -->",
-        )
+    multicol = is_multicolumn(plumber_page)
+    # Collect per-page vector drawing count for summary
+    drawing_count = 0
+    try:
+        lines_objs = plumber_page.lines or []
+        rects_objs = plumber_page.rects or []
+        curves_objs = plumber_page.curves or []
+        drawing_count = len(lines_objs) + len(rects_objs) + len(curves_objs)
+    except Exception:  # noqa: BLE001
+        pass
 
-    return "\n\n".join(ordered)
+    # Only include per-page vector warnings inline when total vector-warning
+    # pages in the document are few (handled at the document level).
+    # We store the warning strings but let the caller decide whether to emit.
+    return {
+        "md": "\n\n".join(ordered),
+        "meta": {
+            "multicolumn": multicol,
+            "vector_warnings": vector_warnings,
+            "drawing_count": drawing_count,
+            "page_idx": page_idx,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -832,17 +1014,81 @@ def pdf_to_markdown(pdf_path: str, out_dir: str) -> Path:
     img_dir.mkdir(parents=True)
 
     fitz_doc = fitz.open(pdf_path)
-    pages_md: list[str] = []
+    page_results: list[dict[str, Any]] = []
     with pdfplumber.open(pdf_path) as pdf:
         font_stats = collect_font_stats(pdf)
         for i, page in enumerate(pdf.pages):
-            pages_md.append(process_page(fitz_doc[i], page, i, img_dir, font_stats))
+            page_results.append(
+                process_page(fitz_doc[i], page, i, img_dir, font_stats)
+            )
     fitz_doc.close()
 
-    md_text = "\n\n---\n\n".join(pages_md)
+    # --- Consolidate per-page warnings into document-level summaries -------
+    multicol_pages: list[int] = []
+    vector_pages: list[int] = []
+    all_vector_warnings: list[str] = []
+    for pr in page_results:
+        meta = pr["meta"]
+        if meta["multicolumn"]:
+            multicol_pages.append(meta["page_idx"] + 1)
+        if meta["vector_warnings"]:
+            vector_pages.append(meta["page_idx"] + 1)
+            all_vector_warnings.extend(meta["vector_warnings"])
+
+    preamble_notes: list[str] = []
+    if multicol_pages:
+        preamble_notes.append(
+            f"<!-- NOTE: multi-column layout detected on "
+            f"{len(multicol_pages)} page(s) "
+            f"({_summarise_pages(multicol_pages)}); "
+            f"reading order may need manual verification -->"
+        )
+    if len(vector_pages) > VECTOR_WARN_PAGE_LIMIT:
+        preamble_notes.append(
+            f"<!-- WARNING: vector graphics could not be extracted on "
+            f"{len(vector_pages)} page(s) "
+            f"({_summarise_pages(vector_pages)}) -->"
+        )
+
+    pages_md: list[str] = []
+    for pr in page_results:
+        md = pr["md"]
+        meta = pr["meta"]
+        # Inline vector warnings only when total vector-warning pages are
+        # few enough to not overwhelm the output; otherwise the preamble
+        # summary replaces per-page detail.
+        if (
+            len(vector_pages) <= VECTOR_WARN_PAGE_LIMIT
+            and meta["vector_warnings"]
+        ):
+            md += "\n\n" + "\n\n".join(meta["vector_warnings"])
+        pages_md.append(md)
+
+    body = "\n\n---\n\n".join(pages_md)
+    if preamble_notes:
+        body = "\n\n".join(preamble_notes) + "\n\n" + body
+
     out_md = out / (Path(pdf_path).stem + ".md")
-    out_md.write_text(md_text, encoding="utf-8")
+    out_md.write_text(body, encoding="utf-8")
     return out_md
+
+
+def _summarise_pages(pages: list[int]) -> str:
+    """Compact page-list summary: collapse consecutive runs into ranges."""
+    if not pages:
+        return ""
+    pages = sorted(set(pages))
+    parts: list[str] = []
+    start = pages[0]
+    prev = pages[0]
+    for p in pages[1:]:
+        if p == prev + 1:
+            prev = p
+        else:
+            parts.append(f"{start}-{prev}" if prev > start else str(start))
+            start = prev = p
+    parts.append(f"{start}-{prev}" if prev > start else str(start))
+    return ", ".join(parts)
 
 
 # ---------------------------------------------------------------------------
